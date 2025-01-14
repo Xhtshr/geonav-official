@@ -18,3 +18,9 @@ tmp.py
 _notebooks
 
 *.json
+*.pkl
+*.png
+*.jpg
+
+ggb/test_unseen
+ggb/val_seen

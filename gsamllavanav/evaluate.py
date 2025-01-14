@@ -125,6 +125,7 @@ def run_episodes_batch(
                 if not done:
                     gsam_rgb = cropclient.crop_image(eps.map_name, pose, args.gsam_rgb_shape, 'rgb')
                     nav_map.update_observations(noisy_pose, gsam_rgb, None, args.gsam_use_map_cache)
+                    nav_map.plot(eps.target_description, noisy_pose.xy, eps.target_position.xy, show=False)
                     pose_logs[eps.id].append(pose)
 
             # prepare inputs
@@ -168,17 +169,15 @@ def run_episodes_batch(
 
     return dict(pose_logs), dict(pred_goal_logs), dict(pred_progress_logs)
 
-
 def move(pose: Pose4D, dst: Point2D, iterations: int, noisy_pose: Pose4D):
 
     dst = Point3D(dst.x, dst.y, pose.z)
 
     for _ in range(iterations):
-        action = lookahead_discrete_action(noisy_pose, [dst])
+        action = lookahead_discrete_action(pose, [dst])
         pose = _moved_pose(pose, *action.value)
     
     return pose
-
 
 def unnormalize_position(normalized_xy: tuple[float, float], map_name: str, map_meters: float):
     nx, ny = normalized_xy

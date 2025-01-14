@@ -38,8 +38,8 @@ def get_teacher_actions_and_trajectory(
 
         # no looking back
         distances = np.linalg.norm(trajectory - np.array(cur_pose.xyz), axis=-1)
-        nearest_waypoint_idx = np.argmin(distances)
-        trajectory = trajectory[nearest_waypoint_idx:]
+        nearest_waypoint_idx = np.argmin(distances) # find the nearest waypoint in trajectory
+        trajectory = trajectory[nearest_waypoint_idx:] # oriented to that waypoint
     
     actions.append(DiscreteAction.STOP.index)
     

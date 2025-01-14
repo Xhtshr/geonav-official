@@ -52,8 +52,8 @@ class Pose5D(NamedTuple):
 
     @classmethod
     def from_direction_vector(cls, x: float, y: float, z: float, dx: float, dy: float, dz: float):
-        yaw = np.arctan2(dy, dx)
-        pitch = np.arctan2(dz, np.sqrt(dx**2 + dy**2))
+        yaw = np.arctan2(dy, dx)#pianzhuan
+        pitch = np.arctan2(dz, np.sqrt(dx**2 + dy**2))#fuyang
         return Pose5D(x, y, z, yaw, pitch)
     
     @property

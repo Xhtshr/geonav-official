@@ -50,7 +50,7 @@ def lookahead_discrete_action(
         return DiscreteAction.GO_DOWN
 
     if next_action.yaw_radians > params.turn_threshold_radians:
-        return DiscreteAction.TURN_LEFT
+        return DiscreteAction.TURN_LEFT # 30 degree
     if next_action.yaw_radians < -params.turn_threshold_radians:
         return DiscreteAction.TURN_RIGHT
     

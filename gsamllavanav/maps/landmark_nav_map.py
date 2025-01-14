@@ -24,7 +24,7 @@ class LandmarkNavMap(Map):
         gsam_params: GSamParams,
     ):
         super().__init__(map_name, map_shape, map_pixels_per_meter)
-
+        self.step = 0
         self.tracking_map = TrackingMap(map_name, map_shape, map_pixels_per_meter)
         self.landmark_map = LandmarkMap(map_name, map_shape, map_pixels_per_meter, landmark_names)
         self.target_map = GSamMap(map_name, map_shape, map_pixels_per_meter, [target_name], gsam_params)
@@ -124,7 +124,7 @@ class LandmarkNavMap(Map):
         show=False,
     ):
         import cv2
-
+        self.step += 1
         predicted_goal_map = cv2.circle(
             img=np.zeros(self.shape, dtype=np.float32),
             center=self.to_row_col(predicted_goal)[::-1],
@@ -157,7 +157,7 @@ class LandmarkNavMap(Map):
             plt.show()
         
         plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-
+        plt.savefig(f'results/test_landmap_00{self.step}.png')
         plt.close(fig)
         
         return plot_img

@@ -80,7 +80,7 @@ def load_image_cache(image_dir=ORTHO_IMAGE_DIR, alt_env: Literal['', 'flood', 'g
 
     if _rgb_cache is None:
         _rgb_cache = {
-            rgb_path.stem: cv2.cvtColor(cv2.imread(str(rgb_path)), cv2.COLOR_BGR2RGB)
+            rgb_path.stem: cv2.cvtColor(cv2.imread(str(rgb_path)), cv2.COLOR_BGR2RGB) # read image into RGB array
             for rgb_path in tqdm(image_dir.glob("*.png"), desc="reading rgb data from disk", leave=False)
         }
 
@@ -89,8 +89,6 @@ def load_image_cache(image_dir=ORTHO_IMAGE_DIR, alt_env: Literal['', 'flood', 'g
             map_name: raster.read(1)  # read first channel (1-based index)
             for map_name, raster in tqdm(_raster_cache.items(), desc="reading depth data from disk", leave=False)
         }
-
-
 
 def clear_image_cache():
     global _raster_cache, _rgb_cache, _height_cache

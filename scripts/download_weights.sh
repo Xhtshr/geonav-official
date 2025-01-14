@@ -7,7 +7,7 @@ wget -P weights/mobile_sam https://github.com/ChaoningZhang/MobileSAM/raw/master
 
 mkdir -p weights/som
 wget -P weights/som https://github.com/UX-Decoder/Semantic-SAM/releases/download/checkpoint/swinl_only_sam_many2many.pth
-wget -P weights/som https://huggingface.co/xdecoder/SEEM/resolve/main/seem_focall_v1.pt
+wget -P weights/som https://hf-mirror.com/xdecoder/SEEM/resolve/main/seem_focall_v1.pt
 wget -P weights/som https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 
 mkdir -p weights/vlnce

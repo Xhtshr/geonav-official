@@ -199,7 +199,7 @@ class VlnResnetDepthEncoder(nn.Module):
 
         out_c, out_h, out_w = self.visual_encoder.output_shape
 
-        self.spatial_embeddings = nn.Embedding(out_h * out_w, 64)
+        self.spatial_embeddings = nn.Embedding(out_h * out_w, 64) # an embedding module containing out_h * out_w tensors of size 64
 
         self.output_shape = (out_c + 64, out_h, out_w)
 

@@ -202,7 +202,8 @@ class GSamMap(Map):
             image_bgr, '.'.join(captions), box_threshold, text_threshold
         )
 
-        # filter out boxes with invalid size
+        # filter out boxes with invalid size, xyxy: left,down,right,up
+        # unit is meter
         box_widths = (detections.xyxy[:, 2] - detections.xyxy[:, 0]) / pixels_per_meter
         box_heights = (detections.xyxy[:, 3] - detections.xyxy[:, 1]) / pixels_per_meter
         box_area = box_widths * box_heights
@@ -213,7 +214,7 @@ class GSamMap(Map):
     @classmethod
     @torch.no_grad()
     def _sam_segment(cls, image_bgr: np.ndarray, detections: sv.Detections) -> np.ndarray:
-        image_rgb = image_bgr[..., ::-1]
+        image_rgb = image_bgr[..., ::-1] # bgr 2 rgb
         cls._sam_predictor.set_image(image_rgb)
 
         def top_score_mask(masks, scores, logits):

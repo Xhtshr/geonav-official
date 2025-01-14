@@ -15,8 +15,9 @@ def goal_selection_gdino(
     args: ExperimentArgs,
     pred_goal_logs: dict[EpisodeID, list[Point2D]]
 ) -> dict[EpisodeID, Pose4D]:
-    
+    # prepare image input
     cropclient.load_image_cache(alt_env=args.alt_env)
+    # TODO optimize this code
     objects = get_city_refer_objects()
     gsam_params = GSamParams(
         args.gsam_use_segmentation_mask, args.gsam_use_bbox_confidence,
@@ -29,10 +30,10 @@ def goal_selection_gdino(
         
         final_pred_pose = Pose4D(*pred_positions[-1], args.altitude + GROUND_LEVEL[map_name], 0)
         rgb = cropclient.crop_image(map_name, final_pred_pose, (int(args.altitude*10), int(args.altitude*10)), 'rgb')
-
+        # find absolute correct object (not conviencing)
         target_object = objects[map_name][obj_id]
         target_name = target_object.processed_descriptions[desc_id].target
-        
+        # make the prediction on GSamMap
         gsam_map = GSamMap(map_name, (240, 240), 240/410, [target_name], gsam_params)
         gsam_map.update_observation(final_pred_pose, rgb)
         pred_pos = bbox_corners_to_position(gsam_map.max_confidence_bbox, gsam_map.ground_level)
