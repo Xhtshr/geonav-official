@@ -8,13 +8,15 @@ from gsamllavanav.space import Point2D, Pose4D
 from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from gsamllavanav.teacher.trajectory import _moved_pose
 from gsamllavanav.observation import cropclient
-# from scenegraphnav.city_scene_graph import build_scene_graph
+from scenegraphnav.city_scene_graph import build_scene_graph
+from scenegraphnav.landmark_search import landmark_loc
+from gsamllavanav.actions import DiscreteAction
+import numpy as np
 
 class LLMController:
-    def __init__(self, args: ExperimentArgs, predictor: GoalPredictor, device: str):
+    def __init__(self, args: ExperimentArgs, pose: Pose4D):
         self.args = args
-        self.predictor = predictor
-        self.device = device
+        self.pose = pose
 
     def perceive(self, pose: Pose4D, map_name: str):
         # 使用感知模块处理RGB和深度图像
@@ -27,10 +29,12 @@ class LLMController:
         landmarks, target = self.extract_landmarks_and_target(instruction)
         return landmarks, target
 
-    def act(self, pose: Pose4D, target: Point2D):
-        # 使用路径规划和场景图进行移动
-        action = lookahead_discrete_action(pose, [target])
-        new_pose = _moved_pose(pose, *action.value)
+    def act(self, pose: Pose4D, actions: list):
+
+        for action in actions:
+            # 执行动作并更新位置
+            new_pose = _moved_pose(pose, *action.value)
+        
         return new_pose
 
     def run(self, episodes: list[Episode]):
@@ -47,7 +51,11 @@ class LLMController:
         # 判断是否到达目标
         return pose.xy.dist_to(target) < self.args.success_dist
 
+    def build_scene_graph(self, args: ExperimentArgs, pose: Pose4D):
+        # 构建场景图
+        scene_graph = build_scene_graph(args, pose)
+        return scene_graph
+
     def extract_landmarks_and_target(self, instruction: str):
         # 解析指令，提取地标和目标
         return [], Point2D(0, 0)
-
