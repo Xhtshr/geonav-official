@@ -2,7 +2,7 @@ import re
 import math
 import json
 
-
+# Nothing new here, just a simple class definition
 class OneStagePromptManager:
     def __init__(self, task_description, instruction):
         self.task_description = task_description
