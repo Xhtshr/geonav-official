@@ -11,7 +11,7 @@ from gsamllavanav.dataset.mturk_trajectory import load_mturk_trajectories
 from gsamllavanav.goal_selection import goal_selection_gdino, goal_selection_llava
 from scenegraphnav.evaluate import run_episodes_batch
 from gsamllavanav.models.goal_predictor import GoalPredictor
-from scenegraphnav.agent import Agent
+from scenegraphnav.agent import SceneAgent
 
 DEVICE = 'cuda'
 
@@ -31,7 +31,8 @@ if args.mode == 'eval':
         # 测试整个split的所有样例
         test_episodes = generate_episodes_from_mturk_trajectories(
             objects,
-            load_mturk_trajectories(args.split, 'all', args.altitude)
+            load_mturk_trajectories(args.split, 'all', args.altitude),
+            max_episodes=10
         )
     # 选择目标预测器或规划器运动至 landmark
     if args.model == 'mgp' and args.landmark_mode == 'predictor':
@@ -52,7 +53,7 @@ if args.mode == 'eval':
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     for episode in test_episodes:
         # 创建Agent实例
-        agent = Agent(args, episode)
+        agent = SceneAgent(args, trajectory_logs[episode.id][-1], episode)
         # 设置目标
         agent.set_target(episode.target_position)  # 假设目标是episode的target_position
         # 运行Agent

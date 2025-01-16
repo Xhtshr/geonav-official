@@ -6,18 +6,18 @@ Important: Use the instruction and observations to plan and adapt your navigatio
 """
 
 
-OBSERVATION_SUMMARY = """Summarize the current observation in detail, focusing on key features of the environment:  
+OBSERVATION_SUMMARY = """(Image shows an aerial view of the surrounding area with a clear view of the target and nearby landmarks.) Summarize the current observation in detail, focusing on key features of the environment:  
 - Colors and textures (e.g., red roof, concrete road).  
 - Shapes and structures (e.g., square building, curved street).  
 - Landmarks and unique details (e.g., tall tree, parking lot with blue cars).  
 
 Use this summary to update the navigation history and align it with the target description.  
 
-Observation: {observation}  
 Key Features:  
 1. Feature_1  
 2. Feature_2  
 ...
+Observation: 
 """
 
 HISTORY_PROMPT = """You are an agent navigating above the city.  
@@ -35,7 +35,7 @@ Update the navigation history:
 - Any new features observed?  
 - Progress made toward the target?  
 
-Updated History:"""
+Updated History."""
 
 PLANNER_PROMPT = """Based on the instruction: {instruction}, generate a detailed and executable action plan.  
 
@@ -72,7 +72,7 @@ Output:
 ----  
 History: {history}  
 Observation: {observation}  
-Thought: Based on the observation, I notice {key_feature}. To move closer to the target or complete the next step, the best action(s) is/are...  
+Thought: Based on the observation, I notice key features of the observation. To move closer to the target or complete the next step, the best action(s) is/are...  
 Final Action: ['DiscreteAction.ACTION_NAME']  
 ----
 
@@ -103,5 +103,4 @@ History: The UAV started near ground level and moved toward an open area.
 Observation: The UAV sees a hilltop that aligns with the instruction's description of the target being at a higher elevation.  
 Thought: The target is on a higher elevation, and the next steps require gaining altitude and moving forward for better visibility.  
 Final Action: ['DiscreteAction.GO_UP', 'DiscreteAction.MOVE_FORWARD']  
-
 """
