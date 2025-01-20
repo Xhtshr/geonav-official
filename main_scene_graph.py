@@ -49,33 +49,45 @@ if args.mode == 'eval':
     
     # 初始化agents列表
     agents = []
-
+    results = []
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
+    VLM_backbone = 'Qwen2-vl'
+    if VLM_backbone == 'Qwen2-vl':
+        from transformers import Qwen2VLForConditionalGeneration
+        vlmodel = Qwen2VLForConditionalGeneration.from_pretrained(
+            "/data1/FoundationModels/Qwen",
+            torch_dtype=torch.bfloat16,
+            attn_implementation="flash_attention_2",
+            device_map="auto",
+        )
+    else:
+        vlmodel = 'ChatGPT'
     for episode in test_episodes:
         # 创建Agent实例
-        agent = SceneAgent(args, trajectory_logs[episode.id][-1], episode)
+        agent = SceneAgent(args, trajectory_logs[episode.id][-1], episode, vlmodel, set_height=45.0)
         # 设置目标
         agent.set_target(episode.target_position)  # 假设目标是episode的target_position
         # 运行Agent
-        agent.run()
-        agents.append(agent)
+        res = agent.run()
+        results.append(res)
+    print(results)
     
-    # 使用VLM推断目标位置
-    predicted_positions = (goal_selection_gdino if args.eval_goal_selector == 'gdino' else goal_selection_llava)(args, pred_goal_logs)
-    for eps_id, pose in predicted_positions.items():
-        trajectory_logs[eps_id].append(pose)
+    # # 使用VLM推断目标位置
+    # predicted_positions = (goal_selection_gdino if args.eval_goal_selector == 'gdino' else goal_selection_llava)(args, pred_goal_logs)
+    # for eps_id, pose in predicted_positions.items():
+    #     trajectory_logs[eps_id].append(pose)
     
-    metrics = eval_goal_predictor(args, test_episodes, trajectory_logs, pred_goal_logs, pred_progress_logs)
+    # metrics = eval_goal_predictor(args, test_episodes, trajectory_logs, pred_goal_logs, pred_progress_logs)
 
-    print(f"{args.split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}")
+    # print(f"{args.split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}")
     
-    noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
-    alt_env = f"_{args.alt_env}" if args.alt_env else ""
-    with open(f'llm_controller_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
-        json.dump({
-            'metrics': metrics.to_dict(),
-            'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},
-            'pred_goal_logs': {str(eps_id): [tuple(pos) for pos in pred_goals] for eps_id, pred_goals in pred_goal_logs.items()},
-            'pred_progress_logs': {str(eps_id): pred_progresses for eps_id, pred_progresses in pred_progress_logs.items()},
-        }, f)
+    # noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
+    # alt_env = f"_{args.alt_env}" if args.alt_env else ""
+    # with open(f'llm_controller_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
+    #     json.dump({
+    #         'metrics': metrics.to_dict(),
+    #         'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},
+    #         'pred_goal_logs': {str(eps_id): [tuple(pos) for pos in pred_goals] for eps_id, pred_goals in pred_goal_logs.items()},
+    #         'pred_progress_logs': {str(eps_id): pred_progresses for eps_id, pred_progresses in pred_progress_logs.items()},
+    #     }, f)
 

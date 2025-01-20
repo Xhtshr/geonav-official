@@ -20,8 +20,8 @@ class LLMController:
 
     def perceive(self, pose: Pose4D, map_name: str):
         # 使用感知模块处理RGB和深度图像
-        rgb = cropclient.crop_image(map_name, pose, (2048, 2048), 'rgb')
-        depth = cropclient.crop_image(map_name, pose, (2048, 2048), 'depth') / self.args.max_depth
+        rgb = cropclient.crop_image(map_name, pose, (1024, 1024), 'rgb')
+        depth = cropclient.crop_image(map_name, pose, (1024, 1024), 'depth') / self.args.max_depth
         return rgb, depth
 
     def understand(self, instruction: str):

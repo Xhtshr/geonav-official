@@ -54,16 +54,13 @@ class MapAgent(Agent):
 
 
 class SceneAgent(Agent):
-    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode):
+    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, model: Qwen2VLForConditionalGeneration, set_height=None):
         super().__init__(args, initial_pose, episode)
         self.episode = episode
+        if set_height is not None:
+            initial_pose.with_z(set_height)
         self.controller = LLMController(args, initial_pose)
-        self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-            "/data1/FoundationModels/Qwen",
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
-            device_map="auto",
-        )
+        self.model = model
         min_pixels = 256 * 28 * 28
         max_pixels = 1280 * 28 * 28
         self.processor = AutoProcessor.from_pretrained(
@@ -90,42 +87,56 @@ class SceneAgent(Agent):
         主循环控制逻辑：感知、生成 Prompt、推理动作、执行动作、更新场景图。
         """
         t = 0
+        Success = False
         while not self.controller.reached_target(self.controller.pose, self.target) and t< self.args.eval_max_timestep:
             t += 1
             print(f"Step {t}")
             # Step 1: 感知环境
+            print("self.controller.pose: ", self.controller.pose)
             rgb, depth = self.controller.perceive(self.controller.pose, self.episode.map_name)
             rgb_img = Image.fromarray(rgb)
-            dep_img = Image.fromarray(depth.squeeze(), mode='L')  # 'L'表示灰度模式
+            rgb_img.save(f"rgb_{t}.png")
+            # dep_img = Image.fromarray(depth.squeeze(), mode='L')  # 'L'表示灰度模式
             prompt_inputs = self.generate_prompt(rgb_img, mode="observation")
-            self.observation = self.get_action_suggestion(prompt_inputs)
+            self.observation = self.get_response(prompt_inputs)
 
             # Step 2: 生成 Prompt 并推理动作
             prompt_inputs = self.generate_prompt(rgb_img, mode="action")
-            self.previous_action = self.get_action_suggestion(prompt_inputs)
+            self.previous_action = self.get_response(prompt_inputs)
 
             action_suggestion = String2DisActionList(self.previous_action)
-
+            print(f"Action Suggestion: {action_suggestion}")
             # Step 3: 执行动作并更新位置
             self.controller.pose = self.controller.act(self.controller.pose, action_suggestion)
 
             # Step 4: 记录历史
-            self.history = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action=self.previous_action)
+            # self.history = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action=self.previous_action)
             # print(f"History: {self.history}")
             # Step 5: 更新场景图
             scene_graph = self.controller.build_scene_graph(self.controller.args, self.controller.pose)
             self.process_scene_graph(scene_graph)
-    
+        
+        if t != self.args.eval_max_timestep:
+            print("Target reached.")
+            Success = True
+        return Success
     # 以下是生成Prompt的函数，用于分析观测、生成动作提示和记录历史。
     def generate_prompt(self, image, mode="observation"):
         """
         基于 RGB 图像和任务描述生成 LLM 所需的 Prompt 输入。
         mode 参数决定生成哪种类型的 Prompt 对话。
         """
+        task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description)
         if mode == "observation":
             # 如果是感知环境，则利用self.prompts["observation_prompt"]生成观测描述
             observation_prompt = self.prompts["observation_prompt"]
             conversation = [
+                {
+                    "role": "system", 
+                    "content": [
+                        {"type": "text", "text": task_prompt},
+                    ],
+                },
                 {
                     "role": "user",
                     "content": [
@@ -159,7 +170,6 @@ class SceneAgent(Agent):
         elif mode == "action":
             # 将任务描述和动作提示合并
             prompt_template = self.prompts["action_prompt"].format(history=self.history, observation=self.observation, key_feature='')
-            task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description)
             conversation = [
                 {
                     "role": "system", 
@@ -185,7 +195,7 @@ class SceneAgent(Agent):
         
         return inputs.to("cuda")
 
-    def get_action_suggestion(self, inputs):
+    def get_response(self, inputs):
         """
         使用 VLM 模型推理下一步 UAV 动作。
         """

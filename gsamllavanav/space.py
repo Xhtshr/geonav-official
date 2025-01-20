@@ -42,6 +42,8 @@ class Pose4D(NamedTuple):
     def xy(self):
         return Point2D(self.x, self.y)
     
+    def with_z(self, new_z: float):
+        return Pose4D(self.x, self.y, new_z, self.yaw)
 
 class Pose5D(NamedTuple):
     x: float
