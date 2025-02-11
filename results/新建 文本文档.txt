@@ -1,0 +1,19 @@
+First, I need to understand the user’s goal. They wish to navigate the drone to a row of gray houses with a parked car in front.
+
+Step 1: Analyze the RGB image
+From the RGB image, I observe the following environmental features:
+
+A green field on the left,
+A railway running through the center,
+A large construction site on the right.
+I assess whether the target (e.g., gray houses or the area with parked cars) is visible in the current view. Based on the image, the target is not observed. Therefore, the next task is to continue exploration.
+Step 2: Analyze the semantic map
+Using the semantic map, I confirm the drone’s current position. The drone is located to the left of the Landmark area (marked in red), and the drone’s field of view (purple) is also to the left of the Landmark. I then identify the relative direction of the target (marked in light blue) on the map, which is located to the right of the Landmark area.
+
+Step 3: Spatial reasoning
+By combining observations from the RGB image and the semantic map, I infer the drone’s relative position to the target. The target is to the right of the drone.
+
+Step 4: Path planning
+The optimal next step is to move right, navigating along the Landmark area.
+
+Finally, I evaluate whether the target is within the current field of view. Since the target is not visible, I select the nearest unexplored area and move in that direction.

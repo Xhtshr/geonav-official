@@ -161,3 +161,82 @@ class LandmarkNavMap(Map):
         plt.close(fig)
         
         return plot_img
+
+    # def plot(
+    #     self,
+    #     goal_description: str,
+    #     predicted_goal: Point2D,
+    #     true_goal: Point2D,
+    #     show=False,
+    # ):
+    #     import cv2
+    #     import matplotlib.pyplot as plt
+    #     from matplotlib.patches import Patch
+    #     from PIL import Image
+    #     import numpy as np
+
+    #     self.step += 1
+
+    #     # 定义颜色和透明度 (RGBA 格式: R, G, B, Alpha)
+    #     colors = {
+    #         'current view area': (0, 0, 1, 0.3),  # 蓝色，透明度0.3
+    #         'explored area': (0, 1, 0, 0.3),     # 绿色，透明度0.3
+    #         'landmarks': (1, 0, 0, 0.3),         # 红色，透明度0.3
+    #         'target': (0, 1, 1, 0.3),            # 青色，透明度0.3
+    #         'surroundings': (1, 0, 1, 0.3),      # 洋红色，透明度0.3
+    #         'predicted goal': (1, 1, 0, 0.6),    # 黄色，透明度0.6
+    #         'true goal': (1, 0.5, 0, 0.6)        # 橙色，透明度0.6
+    #     }
+    #     predicted_goal_map = cv2.circle(
+    #         img=np.zeros(self.shape, dtype=np.float32),
+    #         center=self.to_row_col(predicted_goal)[::-1],
+    #         radius=4, color=1, thickness=-1
+    #     )
+
+    #     true_goal_map = cv2.circle(
+    #         img=np.zeros(self.shape, dtype=np.float32),
+    #         center=self.to_row_col(true_goal)[::-1],
+    #         radius=4, color=1, thickness=-1
+    #     )
+    #     # 获取地图数据 (shape 为 [7, 240, 240])
+    #     maps = np.concatenate([self.to_array(), np.stack([predicted_goal_map, true_goal_map])])
+
+    #     # 创建绘图
+    #     fig, ax = plt.subplots(figsize=(20, 20))
+    #     fig.suptitle(f"{self.name}: {goal_description}")
+
+    #     # 绘制每层，并叠加透明度和颜色
+    #     for i, (_, rgba) in enumerate(colors.items()):
+    #         # 为每个数组生成对应的颜色映射
+    #         layer = maps[i]
+    #         color_map = np.zeros((*layer.shape, 4), dtype=np.float32)  # RGBA 图像
+    #         color_map[..., 0] = rgba[0]  # R
+    #         color_map[..., 1] = rgba[1]  # G
+    #         color_map[..., 2] = rgba[2]  # B
+    #         color_map[..., 3] = layer * rgba[3]  # Alpha 透明度与数值强度相关
+
+    #         ax.imshow(color_map)
+
+    #     # 添加图例
+    #     legend_elements = [
+    #         Patch(facecolor=rgba[:3], edgecolor='w', label=title, alpha=rgba[3]) 
+    #         for title, rgba in colors.items()
+    #     ]
+    #     ax.legend(handles=legend_elements, loc='upper right')
+
+    #     # 隐藏坐标轴
+    #     ax.axis('off')
+
+    #     plt.tight_layout()
+    #     fig.canvas.draw()
+
+    #     if show:
+    #         plt.show()
+
+    #     # 将绘制的画布转换为 PIL 图像
+    #     plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+    #     plt.savefig(f'results/test_landmap_00{self.step}.png')
+
+    #     plt.close(fig)
+
+    #     return plot_img

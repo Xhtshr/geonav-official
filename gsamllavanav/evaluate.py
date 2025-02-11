@@ -125,7 +125,7 @@ def run_episodes_batch(
                 if not done:
                     gsam_rgb = cropclient.crop_image(eps.map_name, pose, args.gsam_rgb_shape, 'rgb')
                     nav_map.update_observations(noisy_pose, gsam_rgb, None, args.gsam_use_map_cache)
-                    nav_map.plot(eps.target_description, noisy_pose.xy, eps.target_position.xy, show=False)
+                    # nav_map.plot(eps.target_description, noisy_pose.xy, eps.target_position.xy, show=False)
                     pose_logs[eps.id].append(pose)
 
             # prepare inputs

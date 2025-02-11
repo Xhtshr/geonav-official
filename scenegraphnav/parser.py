@@ -149,7 +149,7 @@ def parse_args():
     parser.add_argument('--sim_port', type=int, default=41451)
 
     # 在eval params部分添加
-    parser.add_argument('--test_one_example', action='store_true', default=False, 
+    parser.add_argument('--test_one_example', action='store_true', default=True, 
                        help="只测试一个样例")
     parser.add_argument('--split', type=str, default='val_seen',
                        help="测试数据集的split ('val_seen', 'val_unseen', 'test_unseen')")

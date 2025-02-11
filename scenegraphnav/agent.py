@@ -4,11 +4,18 @@ from gsamllavanav.dataset.episode import Episode
 from scenegraphnav.llm_controller import LLMController # only used for our scenegraphnav methods
 
 import re
-import torch
+from openai import OpenAI
+from ggb.QwenAPI import encode_image_from_pil
 from PIL import Image
 from scenegraphnav.prompt.navgpt import *
+from scenegraphnav.prompt.rationales import *
 from gsamllavanav.actions import DiscreteAction
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+import os
+import json
+from datetime import datetime
+from gsamllavanav.maps.landmark_nav_map import LandmarkNavMap
+
 
 def String2DisActionList(action_str):
     action_map = {
@@ -42,11 +49,9 @@ class Agent(object):
     def run(self):
         raise NotImplementedError
     
-    
     def get_results(self):
         # save trajectories and images
         raise NotImplementedError
-
 
 class MapAgent(Agent):
     def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode):
@@ -54,21 +59,39 @@ class MapAgent(Agent):
 
 
 class SceneAgent(Agent):
-    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, model: Qwen2VLForConditionalGeneration, set_height=None):
+    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, model, set_height=None):
         super().__init__(args, initial_pose, episode)
         self.episode = episode
+        self.target = self.episode.target_position
+        self.set_height = set_height  # 保存set_height参数
         if set_height is not None:
             initial_pose.with_z(set_height)
         self.controller = LLMController(args, initial_pose)
         self.model = model
-        min_pixels = 256 * 28 * 28
-        max_pixels = 1280 * 28 * 28
-        self.processor = AutoProcessor.from_pretrained(
-            "/data1/FoundationModels/Qwen", min_pixels=min_pixels, max_pixels=max_pixels
-        )
+        #  local model
+        if isinstance(self.model, Qwen2VLForConditionalGeneration):
+            min_pixels = 256 * 28 * 28
+            max_pixels = 1280 * 28 * 28
+            self.processor = AutoProcessor.from_pretrained(
+                "/data1/FoundationModels/Qwen", min_pixels=min_pixels, max_pixels=max_pixels
+            )
+        # API model
+        elif isinstance(model, OpenAI):
+            self.model = model
+        else:
+            raise ValueError("model must be realized")
+        
         self.prompts = self.init_prompts()
         self.history = ''
         self.previous_action = ''
+        self.results = {
+            "target": (self.target.x, self.target.y),
+            "steps": []
+        }
+        self.landmark_nav_map = LandmarkNavMap(
+            episode.map_name, args.map_shape, args.map_pixels_per_meter, 
+            episode.description_landmarks, episode.description_target, episode.description_surroundings, args.gsam_params
+        )
 
     def init_prompts(self):
         """
@@ -80,48 +103,135 @@ class SceneAgent(Agent):
             "planner_prompt": PLANNER_PROMPT,
             "history_prompt": HISTORY_PROMPT,
             "observation_prompt": OBSERVATION_SUMMARY,
+            "rationale": RATIONALE,
+            "object_caption": OBSERVATION_CAPTION,
+            "object_grounding":OBJECT_GROUNDING,
         }
 
     def run(self):
-        """
-        主循环控制逻辑：感知、生成 Prompt、推理动作、执行动作、更新场景图。
-        """
         t = 0
         Success = False
-        while not self.controller.reached_target(self.controller.pose, self.target) and t< self.args.eval_max_timestep:
+        while not self.controller.reached_target(self.controller.pose, self.target) and t < self.args.eval_max_timestep:
             t += 1
             print(f"Step {t}")
-            # Step 1: 感知环境
-            print("self.controller.pose: ", self.controller.pose)
             rgb, depth = self.controller.perceive(self.controller.pose, self.episode.map_name)
             rgb_img = Image.fromarray(rgb)
-            rgb_img.save(f"rgb_{t}.png")
             # dep_img = Image.fromarray(depth.squeeze(), mode='L')  # 'L'表示灰度模式
-            prompt_inputs = self.generate_prompt(rgb_img, mode="observation")
-            self.observation = self.get_response(prompt_inputs)
+            # measure the z distance between the camera and the target on the ground
+            
+            # update semantic map
+            self.landmark_nav_map.update_observations(
+                self.controller.pose, rgb, None, use_gsam_map_cache=False
+            )
+            # TODO: Add an AOI generation module
+            semap_img = self.landmark_nav_map.plot(
+                goal_description=self.episode.description_target,
+                predicted_goal=self.episode.start_pose.xy,
+                true_goal=self.episode.target_position.xy,
+                show=False
+            )
 
-            # Step 2: 生成 Prompt 并推理动作
-            prompt_inputs = self.generate_prompt(rgb_img, mode="action")
-            self.previous_action = self.get_response(prompt_inputs)
+            if isinstance(self.model, Qwen2VLForConditionalGeneration):
+                # Step 1: 生成 Prompt 并推理 Observation
+                prompt_inputs = self.generate_prompt(rgb_img, semap_img, mode="observation")
+                self.observation = self.get_response(prompt_inputs)
+                
+                prompt_inputs = self.generate_prompt(rgb_img, semap_img, mode="object_caption_only")
+                self.object_list = self.get_response(prompt_inputs)
 
-            action_suggestion = String2DisActionList(self.previous_action)
-            print(f"Action Suggestion: {action_suggestion}")
-            # Step 3: 执行动作并更新位置
+                prompt_inputs = self.generate_prompt(rgb_img, semap_img, mode="object_grounding_only")
+                self.object_bbox = self.get_response(prompt_inputs)
+
+                # Step 2: 生成 Prompt 并推理动作
+                prompt_inputs = self.generate_prompt(rgb_img, semap_img, mode="action")
+                self.previous_action = self.get_response(prompt_inputs)
+
+                action_suggestion = String2DisActionList(self.previous_action)
+                print(f"Action Suggestion: {action_suggestion}")
+            elif isinstance(self.model, OpenAI):
+                # Step 1: 生成 Prompt 并推理 Observation
+                task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description)
+
+                
+                observation_prompt = self.prompts["observation_prompt"].format(instruction=self.episode.target_description)
+                observation_response = self.model.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": observation_prompt}
+                    ],
+                    max_tokens=150
+                )
+                self.observation = observation_response.choices[0].message['content'].strip()
+
+                # Step 2: 生成 Prompt 并推理动作
+                action_prompt = self.prompts["action_prompt"].format(history=self.history, observation=self.observation)
+                action_response = self.model.ChatCompletion.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": action_prompt}
+                    ],
+                    max_tokens=150
+                )
+                self.previous_action = action_response.choices[0].message['content'].strip()
+
+                action_suggestion = String2DisActionList(self.previous_action)
+                print(f"Action Suggestion: {action_suggestion}")
+                # Step 3: Process the action suggestion
+                if action_suggestion:
+                    action = action_suggestion[0]
+                else:
+                    action = DiscreteAction.STOP
+
+                # Perform the action
+                self.controller.pose = self.controller.act(self.controller.pose, action)
+
+            # 记录当前步骤的信息
+            self.results["steps"].append({
+                "time_step": t,
+                "pose": (self.controller.pose.x, self.controller.pose.y, self.controller.pose.z, self.controller.pose.yaw),
+                "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
+                "action_suggestion": self.previous_action
+            })
+
             self.controller.pose = self.controller.act(self.controller.pose, action_suggestion)
 
             # Step 4: 记录历史
-            # self.history = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action=self.previous_action)
-            # print(f"History: {self.history}")
+            self.history = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action=self.previous_action)
+            print(f"History: {self.history}")
             # Step 5: 更新场景图
             scene_graph = self.controller.build_scene_graph(self.controller.args, self.controller.pose)
             self.process_scene_graph(scene_graph)
-        
+
         if t != self.args.eval_max_timestep:
             print("Target reached.")
             Success = True
+
+        self.save_results(Success)
         return Success
+
+    def save_results(self, success):
+        # 生成唯一的文件名，包含set_height信息
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        height_info = f"height_{self.set_height}" if self.set_height is not None else "default_height"
+        filename = f"results_{self.episode.id}_{height_info}_{timestamp}.json"
+        filepath = os.path.join("results", filename)
+
+        # 确保结果目录存在
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        # 添加成功状态到结果
+        self.results["success"] = success
+
+        # 保存结果到文件
+        with open(filepath, 'w') as f:
+            json.dump(self.results, f, indent=4)
+
+        print(f"Results saved to {filepath}")
+
     # 以下是生成Prompt的函数，用于分析观测、生成动作提示和记录历史。
-    def generate_prompt(self, image, mode="observation"):
+    def generate_prompt(self, image, map = None, mode="observation"):
         """
         基于 RGB 图像和任务描述生成 LLM 所需的 Prompt 输入。
         mode 参数决定生成哪种类型的 Prompt 对话。
@@ -130,6 +240,7 @@ class SceneAgent(Agent):
         if mode == "observation":
             # 如果是感知环境，则利用self.prompts["observation_prompt"]生成观测描述
             observation_prompt = self.prompts["observation_prompt"]
+            rationale_prompt = self.prompts["rationale"]
             conversation = [
                 {
                     "role": "system", 
@@ -146,14 +257,21 @@ class SceneAgent(Agent):
                         {"type": "text", "text": observation_prompt},
                     ],
                     },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                        },
+                        {"type": "text", "text": rationale_prompt}
+                    ],
+                    },
             ]
             # 转换为处理器格式
             text_prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
-            inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
+            inputs = self.processor(text=[text_prompt], images=[image, map], padding=True, return_tensors="pt")
             return inputs.to("cuda")
-        elif mode == "history":
-            # 如果是多轮对话，需要记录历史对话
-            history_prompt = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action = self.previous_action)
+        elif mode == "object_caption_only":
             conversation = [
                 {
                     "role": "user", 
@@ -161,12 +279,51 @@ class SceneAgent(Agent):
                         {
                             "type": "image",
                         },
-                        {"type": "text", "text": history_prompt},
+                        {"type": "text", "text": OBSERVATION_CAPTION},
                     ],
                 }
             ]
             text_prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
             inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
+        elif mode == "object_grounding_only":
+            conversation = [
+                {
+                    "role": "user", 
+                    "content": [
+                        {
+                            "type": "image",
+                        },
+                        {"type": "text", "text": OBJECT_GROUNDING},
+                    ],
+                }
+            ]
+            text_prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+            inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
+
+        elif mode == "history":
+            # 如果是多轮对话，需要记录历史对话
+            # change into ChatGPT
+            #导入openai key配置
+            os.environ["OPENAI_API_KEY"] = "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020" # 3.5--1美元
+            # 设置 OPENAI_BASE_URL 环境变量
+            os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus/v1"
+            from ggb.entity_extra import gpt_api_call
+            history_prompt = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action = self.previous_action)
+            self.history = gpt_api_call(prompt=history_prompt)
+            
+            # conversation = [
+            #     {
+            #         "role": "user", 
+            #         "content": [
+            #             {
+            #                 "type": "image",
+            #             },
+            #             {"type": "text", "text": history_prompt},
+            #         ],
+            #     }
+            # ]
+            # text_prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
+            # inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
         elif mode == "action":
             # 将任务描述和动作提示合并
             prompt_template = self.prompts["action_prompt"].format(history=self.history, observation=self.observation, key_feature='')

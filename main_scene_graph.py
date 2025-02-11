@@ -1,5 +1,6 @@
 import json
 import torch
+from openai import OpenAI
 import numpy as np
 from tqdm import trange
 
@@ -51,8 +52,9 @@ if args.mode == 'eval':
     agents = []
     results = []
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
-    VLM_backbone = 'Qwen2-vl'
-    if VLM_backbone == 'Qwen2-vl':
+    VLM_backbone = 'Qwen2.5-VL-72b' # visual model
+    LLM_backbone = 'Qwen-max' # language model
+    if VLM_backbone == 'Qwen2-vl-7b':
         from transformers import Qwen2VLForConditionalGeneration
         vlmodel = Qwen2VLForConditionalGeneration.from_pretrained(
             "/data1/FoundationModels/Qwen",
@@ -60,11 +62,43 @@ if args.mode == 'eval':
             attn_implementation="flash_attention_2",
             device_map="auto",
         )
-    else:
-        vlmodel = 'ChatGPT'
+    elif VLM_backbone == 'Qwen2.5-VL-72b':
+        # base64_image = encode_image("test.png")
+        vlmodel = OpenAI(
+            # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
+            api_key="sk-f0de3487904a4a11950ba707623cdbab",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        )
+    elif VLM_backbone == 'GPT-4o':
+        vlmodel = OpenAI(
+            # 下面两个参数的默认值来自环境变量，可以不加
+            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
+            base_url='https://xiaoai.plus/v1',
+        )
+    
+    if LLM_backbone == 'Qwen-max':
+        llmodel = OpenAI(
+            # 下面两个参数的默认值来自环境变量，可以不加
+            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
+            base_url='https://xiaoai.plus/v1',
+        )
+    elif LLM_backbone == 'GPT-4o':
+        llmodel = OpenAI(
+            # 下面两个参数的默认值来自环境变量，可以不加
+            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
+            base_url='https://xiaoai.plus/v1',
+        )
+    elif LLM_backbone == 'GPT-3.5-turbo':
+        llmodel = OpenAI(
+            # 下面两个参数的默认值来自环境变量，可以不加
+            api_key="sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",
+            base_url='https://xiaoai.plus/v1',
+        )
+
+
     for episode in test_episodes:
         # 创建Agent实例
-        agent = SceneAgent(args, trajectory_logs[episode.id][-1], episode, vlmodel, set_height=45.0)
+        agent = SceneAgent(args, trajectory_logs[episode.id][-1], episode, vlmodel, set_height=None)
         # 设置目标
         agent.set_target(episode.target_position)  # 假设目标是episode的target_position
         # 运行Agent
