@@ -51,50 +51,51 @@ if args.mode == 'eval':
     # 初始化agents列表
     agents = []
     results = []
+    def initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key):
+        if VLM_backbone == 'Qwen2-vl-7b':
+            from transformers import Qwen2VLForConditionalGeneration
+            vlmodel = Qwen2VLForConditionalGeneration.from_pretrained(
+                "/data1/FoundationModels/Qwen",
+                torch_dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2",
+                device_map="auto",
+            )
+        elif VLM_backbone == 'Qwen2.5-VL-72b':
+            vlmodel = OpenAI(
+                api_key=vl_api_key,
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )
+        elif VLM_backbone == 'GPT-4o':
+            vlmodel = OpenAI(
+                api_key=vl_api_key,
+                base_url='https://xiaoai.plus/v1',
+            )
+        
+        if LLM_backbone == 'Qwen-max':
+            llmodel = OpenAI(
+                api_key=ll_api_key,
+                base_url='https://xiaoai.plus/v1',
+            )
+        elif LLM_backbone == 'GPT-4o':
+            llmodel = OpenAI(
+                api_key=ll_api_key,
+                base_url='https://xiaoai.plus/v1',
+            )
+        elif LLM_backbone == 'GPT-3.5-turbo':
+            llmodel = OpenAI(
+                api_key=ll_api_key,
+                base_url='https://xiaoai.plus/v1',
+            )
+        
+        return vlmodel, llmodel
+
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'Qwen2.5-VL-72b' # visual model
     LLM_backbone = 'Qwen-max' # language model
-    if VLM_backbone == 'Qwen2-vl-7b':
-        from transformers import Qwen2VLForConditionalGeneration
-        vlmodel = Qwen2VLForConditionalGeneration.from_pretrained(
-            "/data1/FoundationModels/Qwen",
-            torch_dtype=torch.bfloat16,
-            attn_implementation="flash_attention_2",
-            device_map="auto",
-        )
-    elif VLM_backbone == 'Qwen2.5-VL-72b':
-        # base64_image = encode_image("test.png")
-        vlmodel = OpenAI(
-            # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
-            api_key="sk-f0de3487904a4a11950ba707623cdbab",
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        )
-    elif VLM_backbone == 'GPT-4o':
-        vlmodel = OpenAI(
-            # 下面两个参数的默认值来自环境变量，可以不加
-            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
-            base_url='https://xiaoai.plus/v1',
-        )
+    vl_api_key = "sk-f0de3487904a4a11950ba707623cdbab" #qwen2.5
+    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"#"sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2" # "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",for 3.5-turbo
     
-    if LLM_backbone == 'Qwen-max':
-        llmodel = OpenAI(
-            # 下面两个参数的默认值来自环境变量，可以不加
-            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
-            base_url='https://xiaoai.plus/v1',
-        )
-    elif LLM_backbone == 'GPT-4o':
-        llmodel = OpenAI(
-            # 下面两个参数的默认值来自环境变量，可以不加
-            api_key="sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2",
-            base_url='https://xiaoai.plus/v1',
-        )
-    elif LLM_backbone == 'GPT-3.5-turbo':
-        llmodel = OpenAI(
-            # 下面两个参数的默认值来自环境变量，可以不加
-            api_key="sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",
-            base_url='https://xiaoai.plus/v1',
-        )
-
+    vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
 
     for episode in test_episodes:
         # 创建Agent实例

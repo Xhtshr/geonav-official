@@ -37,16 +37,6 @@ class LLMController:
         
         return new_pose
 
-    def run(self, episodes: list[Episode]):
-        for episode in episodes:
-            pose = episode.start_pose
-            landmarks, target = self.understand(episode.instruction)
-
-            while not self.reached_target(pose, target):
-                rgb, depth = self.perceive(pose, episode.map_name)
-                # 这里可以调用理解模块的其他功能
-                pose = self.act(pose, target)
-
     def reached_target(self, pose: Pose4D, target: Point2D):
         # 判断是否到达目标
         print('dist:', pose.xy.dist_to(target.xy))
@@ -58,6 +48,10 @@ class LLMController:
         # scene_graph = build_scene_graph(args, pose)
         # return scene_graph
 
-    def extract_landmarks_and_target(self, instruction: str):
+    def parse_instruction(self, instruction: str):
         # 解析指令，提取地标和目标
-        return [], Point2D(0, 0)
+        from scenegraphnav.prompt.instruction import create_prompt, gpt_api_call, parse_response
+        prompt = create_prompt(instruction)
+        response = gpt_api_call(prompt)
+        self.intr_knowledge = parse_response(response)
+        return self.intr_knowledge

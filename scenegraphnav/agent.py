@@ -41,6 +41,13 @@ class Agent(object):
         self.args = args
         self.pose = initial_pose
         self.episode = episode  # 存储episode信息
+    
+    def parse_instruction(self, instruction: str):
+        # 解析任务描述，提取关键信息
+        from prompt.instruction import create_prompt, gpt_api_call, parse_response
+        prompt = create_prompt(instruction)
+        response = gpt_api_call(prompt)
+        self.parsed_instruction = parse_response(response)
 
     def set_target(self, target: Point2D):
         # 设置Agent的目标位置（可以是landmark坐标，也可以是CV模型提取出的waypoint位置）
@@ -59,7 +66,7 @@ class MapAgent(Agent):
 
 
 class SceneAgent(Agent):
-    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, model, set_height=None):
+    def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, vlmodel, set_height=None):
         super().__init__(args, initial_pose, episode)
         self.episode = episode
         self.target = self.episode.target_position
@@ -67,7 +74,7 @@ class SceneAgent(Agent):
         if set_height is not None:
             initial_pose.with_z(set_height)
         self.controller = LLMController(args, initial_pose)
-        self.model = model
+        self.model = vlmodel
         #  local model
         if isinstance(self.model, Qwen2VLForConditionalGeneration):
             min_pixels = 256 * 28 * 28
@@ -76,8 +83,8 @@ class SceneAgent(Agent):
                 "/data1/FoundationModels/Qwen", min_pixels=min_pixels, max_pixels=max_pixels
             )
         # API model
-        elif isinstance(model, OpenAI):
-            self.model = model
+        elif isinstance(vlmodel, OpenAI):
+            self.model = vlmodel
         else:
             raise ValueError("model must be realized")
         
@@ -111,6 +118,8 @@ class SceneAgent(Agent):
     def run(self):
         t = 0
         Success = False
+        # Parse the instruction
+        task_prior_knowledge = self.controller.parse_instruction(self.episode.target_description)
         while not self.controller.reached_target(self.controller.pose, self.target) and t < self.args.eval_max_timestep:
             t += 1
             print(f"Step {t}")
@@ -126,10 +135,29 @@ class SceneAgent(Agent):
             # TODO: Add an AOI generation module
             semap_img = self.landmark_nav_map.plot(
                 goal_description=self.episode.description_target,
-                predicted_goal=self.episode.start_pose.xy,
-                true_goal=self.episode.target_position.xy,
+                start_point=self.episode.start_pose.xy,
+                current_pose=self.controller.pose,
                 show=False
             )
+
+            # create a module for inferencing the area of interest from the semantic map
+            # Assuming you have structured prior knowledge of the task in a dictionary format
+            # task_prior_knowledge = {
+            #     "landmarks": self.episode.description_landmarks,
+            #     "target": self.episode.description_target,
+            #     "surroundings": self.episode.description_surroundings
+            # }
+
+
+            # Integrate the prior knowledge with the semantic map
+            AOI_TEXT = self.landmark_nav_map.integrate_prior_knowledge(task_prior_knowledge)
+
+            # Generate the area of interest (AOI) based on the integrated map and prior knowledge
+            aoi = self.landmark_nav_map.generate_aoi(AOI_TEXT, semap_img)
+
+            # Visualize or log the AOI for debugging purposes
+            print(f"Generated AOI: {aoi}")
+
 
             if isinstance(self.model, Qwen2VLForConditionalGeneration):
                 # Step 1: 生成 Prompt 并推理 Observation
@@ -151,7 +179,6 @@ class SceneAgent(Agent):
             elif isinstance(self.model, OpenAI):
                 # Step 1: 生成 Prompt 并推理 Observation
                 task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description)
-
                 
                 observation_prompt = self.prompts["observation_prompt"].format(instruction=self.episode.target_description)
                 observation_response = self.model.ChatCompletion.create(
