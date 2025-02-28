@@ -32,8 +32,8 @@ if args.mode == 'eval':
         # 测试整个split的所有样例
         test_episodes = generate_episodes_from_mturk_trajectories(
             objects,
-            load_mturk_trajectories(args.split, 'all', args.altitude),
-            max_episodes=10
+            load_mturk_trajectories(args.split, 'new', args.altitude),
+            max_episodes=None
         )
     # 选择目标预测器或规划器运动至 landmark
     if args.model == 'mgp' and args.landmark_mode == 'predictor':
@@ -105,7 +105,9 @@ if args.mode == 'eval':
         # 运行Agent
         res = agent.run()
         results.append(res)
-    print(results)
+    # results 里面是true or false,计算正确率
+    accuracy = sum(results) / len(results) if results else 0
+    print(f"Accuracy: {accuracy * 100:.2f}%")
     
     # # 使用VLM推断目标位置
     # predicted_positions = (goal_selection_gdino if args.eval_goal_selector == 'gdino' else goal_selection_llava)(args, pred_goal_logs)

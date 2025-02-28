@@ -170,7 +170,7 @@ def run_episodes_batch(
         poses = [epi.start_pose for epi in episodes]
         landmarks = [epi.description_landmarks for epi in episodes]
         # 创建一个字典来存储每个episode的landmark位置
-        target_xys = [landmark_loc(map_name=episode.map_name, query_names=episode.description_landmarks) for episode in episodes]
+        target_xys = [landmark_loc(map_name=episode.map_name, query_names=episode.description_landmarks, default_pose = episode.start_pose) for episode in episodes]
 
         dones = np.zeros(len(episodes), dtype=bool)
         for t in trange(args.eval_max_timestep, desc='move timestep', unit='step', colour='#66aa66', position=2, leave=False):

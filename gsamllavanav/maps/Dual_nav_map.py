@@ -1,3 +1,19 @@
+# high-level map give VLM insight of the scene，提供例如：
+# 1. 描述场景布局（街道的布局关系）
+# 2. 描述街道的形状
+# 3. 描述无人机所在位置，因此该采取的行动
+# 4. 描述目标和街道的空间关系（置信度）
+# 5. 描述该采取的动作（利用现有信息定位，探索）
+
+# low-level map give VLM the obj loc of the scene,提供例如：
+# 6. 物体，以及和目标描述的一致性
+# 7. 描述导航路径
+# 8. 描述导航路径上的物体关系
+# 9. 从high-level map的导入路径在街道的关系
+# 10. 描述导航路径上的动作（移动到哪个地点，利用控制器转化为前后左右）
+# 11. 描述导航路径上的目标
+# 12. 描述导航路径上的房间
+
 from typing import Optional
 import os
 import re
@@ -17,16 +33,16 @@ from .landmark_map import LandmarkMap
 from .gsam_map import GSamMap, GSamParams
 
 
-class LandmarkNavMap(Map):
+class GeoNavMap(Map):
     def __init__(
         self,
+        id: tuple,
         map_name: str,
         map_shape: tuple[int, int],
         map_pixels_per_meter: float,
         landmark_names: list[str],
         target_name: str, surroundings_names: list[str],
         gsam_params: GSamParams,
-        id: tuple = {},
         grid_size_meters: float = 20.0,
     ):
         super().__init__(map_name, map_shape, map_pixels_per_meter)
@@ -124,7 +140,7 @@ class LandmarkNavMap(Map):
         object_names: list[str],
         map_data: np.ndarray,
     ):
-        nav_map = LandmarkNavMap(map_name, map_shape, map_pixels_per_meter, landmark_names, target_name, object_names)
+        nav_map = GeoNavMap(map_name, map_shape, map_pixels_per_meter, landmark_names, target_name, object_names)
         nav_map.tracking_map.current_view_area = map_data[0].astype(np.uint8)
         nav_map.tracking_map.explored_area = map_data[1].astype(np.uint8)
         nav_map.landmark_map.landmark_map = map_data[2].astype(np.uint8)
@@ -181,15 +197,13 @@ class LandmarkNavMap(Map):
 
     def plot(
         self,
-        goal_description: str,
+        type: str,
         start_point: Point2D,
         current_pose: Pose4D,
-        show: bool =False,
-        with_grid: bool = True
+        with_grid: bool = False
     ):
         import cv2
         import matplotlib.pyplot as plt
-        from matplotlib.patches import Patch
         from PIL import Image
         import numpy as np
 
@@ -197,8 +211,8 @@ class LandmarkNavMap(Map):
 
         # 定义颜色和透明度 (RGBA 格式: R, G, B, Alpha)
         colors = {
-            'current view area': (0, 0, 1, 0.2),  # 蓝色，透明度0.3
-            'explored area': (0, 1, 0, 0.2),     # 绿色，透明度0.3
+            'explored area': (0, 0, 1, 0.2),  # 蓝色，透明度0.3
+            'current view area': (0, 1, 0, 0.2),     # 绿色，透明度0.3
             'landmarks': (1, 0, 0, 0.3),         # 红色，透明度0.3
             'target': (0, 1, 1, 0.5),            # 青色，透明度0.3
             'surroundings': (1, 0, 1, 0.3),      # 洋红色，透明度0.3
@@ -238,18 +252,11 @@ class LandmarkNavMap(Map):
 
         # # ---添加网格线---
         height, width = self.shape
-        # # 设置x,y 的刻度位置为网格线间隔
-        # x_ticks = np.arange(0, width, grid_size)
-        # y_ticks = np.arange(0, height, grid_size)
-        # ax.set_xticks(x_ticks, minor=True)
-        # ax.set_yticks(y_ticks, minor=True)
         if with_grid==True:
             # 绘制网格线
             ax.grid(True, which='both', color='gray', linestyle='--', linewidth=0.6, alpha=0.3)
             ax.set_xticks(np.arange(0, width, self.grid_size_pixels))
             ax.set_yticks(np.arange(0, height, self.grid_size_pixels))
-            # ax.set_xticklabels([f'{x:.1f}' for x in ax.get_xticks()])
-            # ax.set_yticklabels([f'{y:.1f}' for y in ax.get_yticks()])
             grid_size_pixels = self.grid_size_pixels
             for i in range(0, self.shape[1], grid_size_pixels):
                 for j in range(0, self.shape[0], grid_size_pixels):
@@ -272,20 +279,11 @@ class LandmarkNavMap(Map):
         
         for landmark in self.landmark_map.landmarks:
             x, y = self.to_row_col(landmark.position.xy)
-            ax.text(y, x, landmark.name, fontsize=10, color='black', ha='center', va='center', bbox=dict(facecolor='gray', alpha=0.5, pad=1, boxstyle='round'))
-        dx, dy = 10 * np.cos(current_pose.yaw), 10 * np.sin(current_pose.yaw) # 无人机方向箭头
-        ax.arrow(self.to_row_col(current_pose.xy)[1], self.to_row_col(current_pose.xy)[0], dy, dx, width=0.2, head_width=1, head_length=0.5, fc='orange', ec='orange')
+            ax.text(y, x, landmark.name, fontsize=11, color='black', ha='center', va='center', bbox=dict(facecolor='gray', alpha=0.5, pad=1, boxstyle='round'))
+        dx, dy = 5 * np.cos(current_pose.yaw), 10 * np.sin(current_pose.yaw) # 无人机方向箭头
+        ax.arrow(self.to_row_col(current_pose.xy)[1], self.to_row_col(current_pose.xy)[0], dy, dx, width=0.8, head_width=2, head_length=1, fc='orange', ec='orange')
 
-        # 添加图例
-        legend_elements = [
-            Patch(facecolor=rgba[:3], edgecolor='w', label=title, alpha=rgba[3]) 
-            for title, rgba in colors.items()
-        ]
-        ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=3)
         plt.tight_layout()
-
-        if show:
-            plt.show()
 
         # 将绘制的画布转换为 PIL 图像
         plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
@@ -299,119 +297,6 @@ class LandmarkNavMap(Map):
 
         return base64_string
 
-    def eva_plot(
-        self,
-        goal_description: str,
-        start_point: Point2D,
-        true_goal: Point2D,
-        show: bool =False,
-    ):
-        import cv2
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Patch
-        from PIL import Image
-        import numpy as np
-
-
-        # 定义颜色和透明度 (RGBA 格式: R, G, B, Alpha)
-        colors = {
-            'current view area': (0, 0, 1, 0.3),  # 蓝色，透明度0.3
-            'explored area': (0, 1, 0, 0.3),     # 绿色，透明度0.3
-            'landmarks': (1, 0, 0, 0.3),         # 红色，透明度0.3
-            'target': (0, 1, 1, 0.5),            # 青色，透明度0.3
-            'surroundings': (1, 0, 1, 0.3),      # 洋红色，透明度0.3
-            'start point': (1, 1, 0, 1.0),    # 黄色，透明度0.6
-            'true goal': (1, 0.5, 0, 1.0)        # 橙色，透明度0.6
-        }
-
-        start_point_map = cv2.circle(
-            img=np.zeros(self.shape, dtype=np.float32),
-            center=self.to_row_col(start_point)[::-1],
-            radius=4, color=1, thickness=-1
-        )
-        
-
-        refer_point_map = cv2.circle(
-            img=np.zeros(self.shape, dtype=np.float32),
-            center=self.to_row_col(true_goal)[::-1],
-            radius=6, color=1, thickness=1, lineType=cv2.LINE_AA
-        )
-
-        # 获取地图数据 (shape 为 [7, 240, 240])
-        maps = np.concatenate([self.to_array(), np.stack([start_point_map, refer_point_map])])
-
-        # 创建绘图
-        fig, ax = plt.subplots(figsize=(10, 10))
-        # fig.suptitle(f"{self.name}: {goal_description}")
-
-        # 绘制每层，并叠加透明度和颜色
-        for i, (_, rgba) in enumerate(colors.items()):
-            # 为每个数组生成对应的颜色映射
-            layer = maps[i]
-            color_map = np.zeros((*layer.shape, 4), dtype=np.float32)  # RGBA 图像
-            color_map[..., 0] = rgba[0]  # R
-            color_map[..., 1] = rgba[1]  # G
-            color_map[..., 2] = rgba[2]  # B
-            color_map[..., 3] = layer * rgba[3]  # Alpha 透明度与数值强度相关
-
-            ax.imshow(color_map)
-
-        # # ---添加网格线---
-        height, width = self.shape
-        # # 设置x,y 的刻度位置为网格线间隔
-        # x_ticks = np.arange(0, width, grid_size)
-        # y_ticks = np.arange(0, height, grid_size)
-        # ax.set_xticks(x_ticks, minor=True)
-        # ax.set_yticks(y_ticks, minor=True)
-        # 绘制网格线
-        ax.grid(True, which='both', color='gray', linestyle='--', linewidth=0.6, alpha=0.3)
-        ax.set_xticks(np.arange(0, width, self.grid_size_pixels))
-        ax.set_yticks(np.arange(0, height, self.grid_size_pixels))
-        # ax.set_xticklabels([f'{x:.1f}' for x in ax.get_xticks()])
-        # ax.set_yticklabels([f'{y:.1f}' for y in ax.get_yticks()])
-        grid_size_pixels = self.grid_size_pixels
-        for i in range(0, self.shape[1], grid_size_pixels):
-            for j in range(0, self.shape[0], grid_size_pixels):
-                # 计算当前网格的字母和数字编号
-                col = chr(ord('A') + i // grid_size_pixels)
-                row = (j // grid_size_pixels) + 1
-                grid_id = f"{col}{row}"
-                
-                # 在网格中心位置添加文本
-                ax.text(
-                    x=i + grid_size_pixels/2, 
-                    y=j + grid_size_pixels/2, 
-                    s=grid_id,
-                    color='gray',  # 使用浅色避免喧宾夺主
-                    fontsize=8,    # 小字号
-                    ha='center', 
-                    va='center',
-                    alpha=0.9      # 半透明
-                )
-        
-        for landmark in self.landmark_map.landmarks:
-            x, y = self.to_row_col(landmark.position.xy)
-            ax.text(y, x, landmark.name, fontsize=10, color='black', ha='center', va='center', bbox=dict(facecolor='gray', alpha=0.5, pad=1, boxstyle='round'))
-
-        # 添加图例
-        legend_elements = [
-            Patch(facecolor=rgba[:3], edgecolor='w', label=title, alpha=rgba[3]) 
-            for title, rgba in colors.items()
-        ]
-        ax.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=3)
-        plt.tight_layout()
-
-        if show:
-            plt.show()
-
-        # 将绘制的画布转换为 PIL 图像
-        plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-        plot_img = plot_img.resize((224,224))
-        plt.savefig(f'results/finetuned_rationale/landmap_{self.id}_groundtruth_00{self.step}.png')
-
-        plt.close(fig)
-
-        return
     def integrate_prior_knowledge(self, target_description: str, task_prior_knowledge: dict, rationale: str):
         #'vanilla', 'spatial_rationale', 'ours'
         if rationale == 'vanilla':
@@ -519,8 +404,8 @@ class LandmarkNavMap(Map):
         - Current Pose: Drone's current position and orientation (orange arrow)  
         - Start Pose: Drone's start position location (yellow arrow)
         - Landmarks: Predefined static objects with labels  
-        - Explored Area: Regions already scanned (green overlay)  
-        - Current View: Drone's visible area (blue overlay)  
+        - Explored Area: Regions already scanned (blue overlay) 
+        - Current View: Drone's visible area (green overlay)  
         - Suspected Targets: Detected objects matching target description (cyan regions)  
         - Surrounding Objects: Other detected objects (magenta regions)  
 

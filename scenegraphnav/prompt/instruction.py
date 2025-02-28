@@ -66,7 +66,7 @@ Extracted:
 Instruction: "A dark blue car near the corner of Beche Road and Priory Road next to the Cellarer's Chequer building"
 {
   "Target": {
-    "object": "car",
+    "object_class": "car",
     "attribute":{
         "color": "dark blue",
     }
@@ -79,7 +79,7 @@ Instruction: "A dark blue car near the corner of Beche Road and Priory Road next
         "Cellarer's Chequer": "next to the Cellarer's Chequer building"
     }
   },
-  "Surrounding": ["buildings", "streets"],
+  "Surrounding": ["buildings"],
   "Spatial_Relationships with objects": [
     "The dark blue car is next to the Cellarer's Chequer building"
   ]

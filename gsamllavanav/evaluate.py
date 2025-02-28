@@ -86,6 +86,37 @@ def eval_goal_predictor(
 
     return metrics
 
+def eval_planning_metrics(
+    args: ExperimentArgs,
+    episodes: list[Episode],
+    trajectory_logs: dict[EpisodeID, list[Pose4D]]
+):
+    # metrics based on distance to goal
+    final_pos_to_goal_dists = np.array([trajectory_logs[eps.id][-1].xy.dist_to(eps.target_position.xy) for eps in episodes])
+
+    # metrics based on path
+    def oracle_distance(goal: Point2D, trajectory: list[Point2D]) -> float:
+        goal = np.array(goal)
+        trajectory = np.array(trajectory)
+        distances = np.linalg.norm(goal - trajectory, axis=-1)
+        return distances.min()
+    
+    oracle_pos_to_goal_dists = np.array([oracle_distance(eps.target_position.xy, [pose.xy for pose in trajectory_logs[eps.id]]) for eps in episodes])
+    
+
+    metrics = GoalPredictorMetrics(
+        final_pos_to_goal_dists.mean(),
+        np.inf,
+        (final_pos_to_goal_dists <= args.success_dist).mean(),
+        0,
+        oracle_pos_to_goal_dists.mean(),
+        np.inf,
+        (oracle_pos_to_goal_dists <= args.success_dist).mean(),
+        0,
+        np.inf, np.inf
+    )
+
+    return metrics
 
 @torch.no_grad()
 def run_episodes_batch(

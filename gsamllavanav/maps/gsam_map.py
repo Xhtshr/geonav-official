@@ -9,10 +9,9 @@ from groundingdino.util.inference import Model
 from scipy.spatial.transform import Rotation as R
 
 from gsamllavanav.defaultpaths import GDINO_CHECKPOINT_PATH, GDINO_CONFIG_PATH, SAM_CHECKPOINT_PATH, MOBILE_SAM_CHECKPOINT_PATH, GSAM_MAPS_DIR
-from gsamllavanav.space import Pose4D, view_area_corners, xyxy_to_global_bbox
+from gsamllavanav.space import Point2D, Pose4D, view_area_corners, xyxy_to_global_bbox
 
 from .map import Map
-
 
 GDINO_BOX_TRESHOLD = 0.35
 GDINO_TEXT_TRESHOLD = 0.25
@@ -81,8 +80,22 @@ class GSamMap(Map):
             image_bgr, self.captions, image_bgr.shape[0] / (2 * (camera_pose.z - self.ground_level)),
             self.gsam_params.box_threshold, self.gsam_params.text_threshold, self.gsam_params.max_box_size, self.gsam_params.max_box_area
         )
-        
+        # store obj nodes
+        self.obj_list = []
         if self.detections:
+            poses = []
+            for bbox in self.detections.xyxy:
+                x_center = (bbox[0] + bbox[2]) / 2
+                y_center = (bbox[1] + bbox[3]) / 2
+                camera_xys = np.array([((x_center/image_bgr.shape[0]) *2 - 1), ((y_center/image_bgr.shape[0]) * 2-1)]) * (camera_pose.z - self.ground_level)
+                cos, sin = np.cos(camera_pose.yaw), np.sin(camera_pose.yaw)
+                r = np.array([[cos, -sin], [sin, cos]])
+                world_xys = (-r @ camera_xys) + np.array(camera_pose.xy)
+                poses.append(Point2D(world_xys[0],world_xys[1]))
+            for pos, phrase, confidence in zip(poses, self.phrases, self.detections.confidence):
+                if phrase == '':
+                    continue
+                self.obj_list.append((pos, phrase, confidence))
             if self.gsam_params.use_segmentation_mask:
                 self.detections.mask = GSamMap._sam_segment(image_bgr, self.detections)
             else:
@@ -99,7 +112,7 @@ class GSamMap(Map):
             self.gsam_map = np.maximum(self.gsam_map, new_gsam_map)
 
         return self
-
+    
     def update_from_map_cache(self, camera_pose: Pose4D):
 
         rows, cols = self.to_rows_cols(view_area_corners(camera_pose, self.ground_level))

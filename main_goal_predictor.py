@@ -49,7 +49,7 @@ if args.mode == 'eval':
 
     for split in ('val_seen', 'val_unseen', 'test_unseen'):
         
-        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'easy', args.altitude))
+        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'new', args.altitude))
 
         trajectory_logs, pred_goal_logs, pred_progress_logs = run_episodes_batch(args, model, test_episodes, DEVICE)
 
