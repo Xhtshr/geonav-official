@@ -27,6 +27,7 @@ class EvaluationMetrics:
     navigation_error: float = np.inf
     success_rate: float = 0.
     oracle_success_rate: float = 0.
+    success_rate_weighted_by_path_length: float = 0.
     
     @classmethod
     def names(cls):
@@ -36,6 +37,7 @@ class EvaluationMetrics:
         return asdict(self)
 
 
+# 修改eval_policy函数
 def eval_policy(
     policy: Policy,
     episodes: list[Episode],
@@ -43,24 +45,48 @@ def eval_policy(
     device: str,
     return_logs=False,
 ):
-
     action_logs, trajectory_logs = (run_episodes if args.eval_batch_size == 1 else run_episodes_batch)(policy, episodes, args, device)
 
-    navigation_error_by_episode = np.array([trajectory_logs[eps.id][-1].xyz.dist_to(eps.target_position) for eps in episodes])
-    navigation_error = navigation_error_by_episode.mean()
-    success_rate = (navigation_error_by_episode < args.success_dist).mean()
+    # 计算路径长度函数
+    def calculate_path_length(trajectory: list[Pose4D]) -> float:
+        return sum(
+            np.linalg.norm(np.array(curr.xyz) - np.array(prev.xyz))
+            for curr, prev in zip(trajectory[1:], trajectory[:-1])
+        )
 
+    # 计算各episode指标
+    spl_values = []
+    navigation_error_by_episode = []
+    oracle_distance_by_episode = []
+    
+    for eps in episodes:
+        # 原始指标计算
+        final_pose = trajectory_logs[eps.id][-1].xyz
+        navigation_error = final_pose.dist_to(eps.target_position)
+        navigation_error_by_episode.append(navigation_error)
+        
+        # SPL计算要素
+        success = float(navigation_error < args.success_dist)
+        path_length = calculate_path_length(trajectory_logs[eps.id])
+        optimal_length = calculate_path_length(eps.trajectory)  # 假设episode包含最优路径长度
+        
+        # 处理除零情况
+        denominator = max(path_length, optimal_length)
+        spl = success * optimal_length / denominator if denominator > 0 else 0
+        spl_values.append(spl)
+        
+        # Oracle计算
+        trajectory_xy = np.array([pose.xy for pose in trajectory_logs[eps.id]])
+        oracle_distance = np.min(np.linalg.norm(eps.target_position.xy - trajectory_xy, axis=-1))
+        oracle_distance_by_episode.append(oracle_distance)
 
-    def oracle_distance(goal: Point3D, trajectory: list[Pose4D]) -> float:
-        goal = np.array(goal.xy)
-        trajectory = np.array(trajectory)[:, :2]
-        distances = np.linalg.norm(goal - trajectory, axis=-1)
-        return distances.min()
-
-    oracle_distance_by_episode = np.array([oracle_distance(eps.target_position, trajectory_logs[eps.id]) for eps in episodes])
-    oracle_success_rate = (oracle_distance_by_episode <= args.success_dist).mean()
-
-    metrics = EvaluationMetrics(navigation_error, success_rate, oracle_success_rate)
+    # 指标聚合
+    metrics = EvaluationMetrics(
+        navigation_error=np.mean(navigation_error_by_episode),
+        success_rate=np.mean([e < args.success_dist for e in navigation_error_by_episode]),
+        oracle_success_rate=np.mean([d <= args.success_dist for d in oracle_distance_by_episode]),
+        success_rate_weighted_by_path_length=np.mean(spl_values)
+    )
 
     if return_logs:
         return action_logs, trajectory_logs, metrics

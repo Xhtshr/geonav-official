@@ -49,14 +49,53 @@ class GSamMap(Map):
         device='cuda',
     ):
         super().__init__(map_name, map_shape, map_pixels_per_meter)
+        # 新增颜色映射属性
+        self.semantic_colors = {
+            'car': (255, 0, 0, 255),    # 红色
+            'building': (210, 105, 30, 255),  # 棕色
+            'tree': (0, 100, 0, 255),   # 绿色
+            'other': (32, 32, 32, 255)  # 黑色
+        }
+        self.color_cache = {}  # 用于动态颜色分配
+        self.color_array = np.zeros((*map_shape, 4), dtype=np.uint8)  # RGB颜色阵列初始化为黑底透明
 
         self.captions = captions
         self.gsam_map = np.zeros(map_shape, dtype=np.float32)
         self.gsam_params = gsam_params
+        self.obj_list = []
         
         if GSamMap._grounding_dino_model is None or GSamMap._sam_predictor is None:
             GSamMap._init_models(device=device)
 
+    def _get_dynamic_color(self, phrase):
+        """动态生成高对比度颜色（优化HSV色轮算法）"""
+        if phrase not in self.semantic_colors:
+            # 避免与预定义颜色冲突
+            predefined_hues = {color[0]: True for color in self.semantic_colors.values()}
+            
+            # 黄金角分割算法 (137.5度 -> OpenCV的HSV范围0-180对应到68.75)
+            golden_angle = 68.75  
+            hue = (len(self.color_cache) * golden_angle) % 180
+            
+            # 跳过红色区域（0-15度）和邻近色
+            while any(abs(hue - h) < 20 for h in predefined_hues):  
+                hue = (hue + 30) % 180
+            
+            # 调整饱和度与明度增强对比度
+            saturation = 220 + (len(self.color_cache) % 3)*15  # 220-250
+            value = 200 + (len(self.color_cache) % 4)*15       # 200-245
+            
+            # 生成RGB颜色
+            rgb_color = cv2.cvtColor(
+                np.uint8([[[hue, saturation, value]]]),
+                cv2.COLOR_HSV2RGB
+            )[0,0].tolist()
+            
+            self.color_cache[phrase] = (*rgb_color, 255)
+            self.semantic_colors[phrase] = self.color_cache[phrase]
+        
+        return self.semantic_colors[phrase]
+    
     def update_observation(
         self,
         camera_pose: Pose4D,
@@ -75,7 +114,7 @@ class GSamMap(Map):
             self.detections = None
             self.phrases = None
             return self
-
+        # 在这里不兼容旧方法了
         self.detections, self.phrases = GSamMap._gdino_predict_bboxes(
             image_bgr, self.captions, image_bgr.shape[0] / (2 * (camera_pose.z - self.ground_level)),
             self.gsam_params.box_threshold, self.gsam_params.text_threshold, self.gsam_params.max_box_size, self.gsam_params.max_box_area
@@ -83,6 +122,7 @@ class GSamMap(Map):
         # store obj nodes
         self.obj_list = []
         if self.detections:
+            # 生成语义颜色层
             poses = []
             for bbox in self.detections.xyxy:
                 x_center = (bbox[0] + bbox[2]) / 2
@@ -110,8 +150,9 @@ class GSamMap(Map):
                 new_gsam_map = self._gsam_map_from_perspective_projection(self.detections, camera_pose, depth_perspective, max_depth_meters)
             
             self.gsam_map = np.maximum(self.gsam_map, new_gsam_map)
-
+            
         return self
+    
     
     def update_from_map_cache(self, camera_pose: Pose4D):
 
@@ -262,8 +303,42 @@ class GSamMap(Map):
         map_cols = map_cols.clip(0, self.shape[1] - 1)
         gsam_map = np.zeros(self.shape, dtype=np.float32)
         gsam_map[map_rows, map_cols] = confidence_wighted_mask.flatten()
+
+        self._update_color_layer(
+            resized_masks=resized_masks,
+            world_xys=world_xys,
+            phrases=self.phrases,
+            img_shape=image_shape
+        )
         
         return gsam_map
+    
+    def _update_color_layer(self, resized_masks, world_xys, phrases, img_shape):
+        """核心颜色更新逻辑"""
+        # 将世界坐标转换为地图网格坐标
+        rows, cols = self.to_rows_cols(world_xys.reshape(-1, 2))
+        map_coords = np.stack([rows, cols], axis=1).reshape(*img_shape, 2).transpose(2,0,1)
+
+        # 创建临时颜色层
+        temp_color = np.zeros_like(self.color_array)
+
+        for idx in range(len(resized_masks)):
+            mask = resized_masks[idx]
+            phrase = phrases[idx].lower()
+            if phrase == '':
+                continue
+            color = self.semantic_colors.get(phrase, self._get_dynamic_color(phrase))
+            
+            # 生成掩码区域坐标
+            rows, cols = map_coords[0][mask], map_coords[1][mask]
+            valid = (rows >= 0) & (rows < self.shape[0]) & (cols >= 0) & (cols < self.shape[1])
+            r, c = rows[valid].astype(int), cols[valid].astype(int)
+            
+            # 直接覆盖颜色（无透明度混合）
+            temp_color[r, c] = color
+
+        # 保留最强颜色（不叠加）
+        self.color_array = np.maximum(self.color_array, temp_color)
 
     def _gsam_map_from_perspective_projection(self, detections: sv.Detections, camera_pose: Pose4D, depth_perspective: np.ndarray, max_depth_meters: float):
         depth_n_row, depth_n_col = depth_perspective.shape
@@ -281,6 +356,13 @@ class GSamMap(Map):
         map_cols = map_cols.clip(0, self.shape[1] - 1)
         gsam_map = np.zeros(self.shape, dtype=np.float32)
         gsam_map[map_rows, map_cols] = confidence_wighted_mask.flatten()
+        # 新增颜色处理（与平面投影相同逻辑）
+        self._update_color_layer(
+            resized_masks=resized_masks,
+            world_xys=xyz_world_view[..., :2],  # 使用3D坐标的XY平面
+            phrases=self.phrases,
+            img_shape=(depth_n_row, depth_n_col)
+        )
 
         return gsam_map
 

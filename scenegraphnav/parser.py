@@ -19,6 +19,7 @@ class ExperimentArgs:
     resume_log_id: str
 
     # observation
+    map_type: str
     map_size: int
     map_meters: float
     map_update_interval: int
@@ -97,14 +98,16 @@ def parse_args():
 
     parser.add_argument('--model', type=str, choices=['mgp', 'seq2seq_with_map', 'cma_with_map'], default='mgp')
     # landmark mode
-    parser.add_argument('--landmark_mode', type=str, choices=['predictor', 'planner'], default='planner')
+    parser.add_argument('--landmark_mode', type=str, choices=['predictor', 'planner', 'None'], default='None')
     # logger
     parser.add_argument('--log', action='store_true', default=False, help="log results to wandb")
     parser.add_argument('--silent', action='store_true', default=False, help="disable printing log info to stdout")
     parser.add_argument('--resume_log_id', type=str, default='')
-
+    # result save path
+    parser.add_argument('--output_dir', type=str, default='results/')
     # observation
-    parser.add_argument('--map_size', type=int, default=240)
+    parser.add_argument('--map_type', type=str, choices=['topdown_map', 'w/o_semantic', 'w/o_annotation', 'w/o_landmark', 'map_with_grid', ''], default='topdown_map')
+    parser.add_argument('--map_size', type=int, default=480)
     parser.add_argument('--map_meters', type=float, default=410.)
     parser.add_argument('--map_update_interval', type=int, default=5)
     parser.add_argument('--max_depth', type=float, default=200.)
@@ -118,7 +121,7 @@ def parse_args():
     parser.add_argument('--gsam_use_bbox_confidence', action='store_true', default=False)
     parser.add_argument('--gsam_use_map_cache', action='store_true', default=False)
     parser.add_argument('--gsam_box_threshold', type=float, default=0.35)
-    parser.add_argument('--gsam_text_threshold', type=float, default=0.25)
+    parser.add_argument('--gsam_text_threshold', type=float, default=0.35)
     parser.add_argument('--gsam_max_box_size', type=float, default=50.)
     parser.add_argument('--gsam_max_box_area', type=float, default=3000.)
     

@@ -20,6 +20,7 @@ class LLMController:
     def __init__(self, args: ExperimentArgs, pose: Pose4D):
         self.args = args
         self.pose = pose
+        self.timestep = 0
         # 初始化知识图谱实例
         self.scene_graph = KnowledgeGraph()
 
@@ -135,13 +136,13 @@ class LLMController:
         print('dist:', pose.xy.dist_to(target.xy))
         return pose.xy.dist_to(target.xy) < self.args.success_dist #-10.0
 
-    def build_scene_graph(self, objects, landmarks, show=True):
+    def build_scene_graph(self, objects, landmarks, show=True, time_window=3):
 
         for landmark in landmarks:
             self.scene_graph.add_geo_node(landmark)
         
         for object in objects:
-            self.scene_graph.add_object_node(object[0], object[1], object[2])
+            self.scene_graph.add_object_node(object[0], object[1], object[2], self.timestep)
 
         # 执行查询
         query_engine = QueryEngine(self.scene_graph)
@@ -150,19 +151,22 @@ class LLMController:
         landmark = query_engine.is_within_geo_node(current_pos) + query_engine.get_geo_node_info(current_pos)
 
         surrounding = ''
-        surrounding + f"Current Position is {(current_pos.x, current_pos.y)}"
+        recent_objects = query_engine.get_recent_objects(current_timestamp=self.timestep, time_window=time_window)
+        surrounding += f"Current Position is {(round(current_pos.x,2), round(current_pos.y,2))}"
         for item in context:
-            surrounding + f"The {item['type'].upper()} Node {item.get('name','')}{item.get('class','')} is {item['distance']} to the {item['direction']}."
-        print(surrounding)
+            surrounding += f"The {item['type'].upper()} Node {item.get('name','')}{item.get('class','')} is {item['distance']} to the {item['direction']}."
         if show == True:
             visualize_knowledge_graph(self.scene_graph, current_pos)
         
-        return surrounding,landmark
+        return surrounding, landmark, recent_objects
 
     def parse_instruction(self, instruction: str):
         # 解析指令，提取地标和目标
-        from scenegraphnav.prompt.instruction import create_prompt, gpt_api_call, parse_response
+        from scenegraphnav.prompt.instruction import create_prompt, gpt_api_call
+        from scenegraphnav.agent import extract_json_from_msg
         prompt = create_prompt(instruction)
         response = gpt_api_call(prompt)
-        self.intr_knowledge = parse_response(response)
+        self.intr_knowledge = extract_json_from_msg(response)
+        if self.intr_knowledge is None:
+            self.intr_knowledge = extract_json_from_msg(response)
         return self.intr_knowledge

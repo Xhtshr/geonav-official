@@ -115,7 +115,6 @@ def run_episodes_batch(
                 ) for eps in episodes_batch
             ]
             
-
             for t in trange(args.eval_max_timestep, desc='eval timestep', unit='step', colour='#66aa66', position=2, leave=False):
 
                 gps_noise_batch = np.random.normal(scale=args.gps_noise_scale, size=(batch_size, 2))

@@ -38,12 +38,12 @@ class GeoNode(KnowledgeNode):
         self.contour_polygon = city_obj.contour_polygon
 
 class ObjectNode(KnowledgeNode):
-    def __init__(self, detection_id, position, obj_class, confidence):
+    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None):
         super().__init__(
             node_id=f"obj_{detection_id}",
             node_type='object',
             position=position,
-            timestamp=time.time()
+            timestamp=timestamp
         )
         self.obj_class = obj_class
         self.confidence = confidence
@@ -73,20 +73,48 @@ class KnowledgeGraph:
         self.spatial_index = SpatialIndex()
         self.nodes = {}
     
+    def update_nodes(self, current_timestamp: int, decay_rate=0.1):
+        """
+        更新节点置信度并清理过期节点
+        Args:
+            current_timestamp: 当前时间步
+            decay_rate: 每个时间步的置信度衰减率(默认0.1)
+        """
+        to_remove = []
+        
+        for node_id, node in self.nodes.items():
+            if isinstance(node, ObjectNode):
+                # 计算存活时间步数
+                time_alive = current_timestamp - node.timestamp
+                
+                # 指数衰减公式：confidence * (1 - decay_rate)^t
+                node.confidence *= (1 - decay_rate) ** time_alive
+                
+                # 标记需要移除的节点
+                if node.confidence <= 0.01:  # 设置最小阈值
+                    to_remove.append(node_id)
+        
+        # 移除低置信度节点
+        for node_id in to_remove:
+            node = self.nodes.pop(node_id)
+            hashed_id = hash(node_id)
+            self.spatial_index.idx.delete(hashed_id, None)
+            del self.spatial_index.nodes[hashed_id]
+    
     def add_geo_node(self, city_obj: CityReferObject):
         node = GeoNode(city_obj)
         self._add_node(node)
     
-    def add_object_node(self, position, obj_class, confidence):
+    def add_object_node(self, position, obj_class, confidence, timestamp: int):
         node_id = f"obj_{len(self.nodes)}"
-        node = ObjectNode(node_id, position, obj_class, confidence)
+        node = ObjectNode(node_id, position, obj_class, confidence, timestamp)
         self._add_node(node)
     
     def _add_node(self, node):
         # 简单去重策略：相同位置同类型视为同一对象
-        existing = self.spatial_index.query_radius(node.position, 1.0)
+        existing = self.spatial_index.query_radius(node.position, 4.0)
         for n in existing:
-            if n.type == node.type and self._distance(n.position, node.position) < 1.0:
+            if n.type == node.type and self._distance(n.position, node.position) < 4.0:
                 return  # 跳过重复对象
         self.nodes[node.id] = node
         self.spatial_index.insert(node)
@@ -120,6 +148,37 @@ class QueryEngine:
             desc['confidence'] = node.confidence
         return desc
     
+    def get_recent_objects(self, current_timestamp: int, time_window: int):
+        """获取指定时间窗口内的动态物体信息
+        Args:
+            current_timestamp: 当前仿真时间戳（0-20的整数）
+            time_window: 要查询的时间窗口长度（正整数）
+        """
+        threshold = max(0, current_timestamp - time_window)
+        
+        recent = []
+        for node in self.graph.nodes.values():
+            if isinstance(node, ObjectNode) and node.timestamp is not None:
+                if threshold <= node.timestamp <= current_timestamp:
+                    recent.append({
+                        'id': node.id,
+                        'type': node.obj_class,
+                        'pos': (node.position.x, node.position.y),
+                        'age': current_timestamp - node.timestamp
+                    })
+        
+        if not recent:
+            return f"No objects has been detected in the past {time_window}"
+            
+        desc = [f"Detected {len(recent)} objects in the past {time_window} timesteps:"]
+        for obj in sorted(recent, key=lambda x: x['age']):
+            desc.append(
+                f"{obj['type']} (ID:{obj['id']}) at ({obj['pos'][0]:.1f}, {obj['pos'][1]:.1f})"
+                f", appeared {obj['age']} steps ago"
+            )
+        
+        return '\n'.join(desc)
+
     @staticmethod
     def _calc_distance(p1: Point2D, p2: Point2D):
         return math.hypot(p1.x - p2.x, p1.y - p2.y)
@@ -141,7 +200,7 @@ class QueryEngine:
                     name_list.append(node.name)
         if name_list:
             return f' in {", ".join(name_list)}'
-        return f' not in any landmarks'
+        return f' not in any landmarks. '
     
     # 这里我希望实现输入位置，检索到geo_node的距离和方向，并回复文本答案
     def get_geo_node_info(self, position: Point2D):
@@ -150,7 +209,7 @@ class QueryEngine:
             if isinstance(node, GeoNode):
                 distance = self._calc_distance(node.position, position)
                 direction = self._get_direction(position, node.position)
-                answer += f"The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.\n"
+                answer += f" The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.\n"
         return answer
     
 

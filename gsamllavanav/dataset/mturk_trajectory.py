@@ -10,7 +10,7 @@ from gsamllavanav.mapdata import GROUND_LEVEL
 
 
 MturkSplit = Literal['train_seen', 'val_seen', 'val_unseen', 'test_unseen']
-MturkDifficulty = Literal['easy', 'medium', 'hard', 'all', 'new']
+MturkDifficulty = Literal['easy', 'medium', 'hard', 'all', 'new', 'easy_simpled', 'medium_simpled', 'hard_simpled', 'easy_simpled_0', 'easy_simpled_1', 'easy_simpled_2', 'easy_simpled_3', 'easy_simpled_4']
 
 
 def load_mturk_trajectories(split: MturkSplit, difficulty: MturkDifficulty, fix_altitude: Optional[float] = None, trajectory_dir=MTURK_TRAJECTORY_DIR):

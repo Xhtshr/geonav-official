@@ -1,11 +1,16 @@
 from typing import Optional
 import os
 import re
+import cv2
 import json
+from PIL import Image
 import numpy as np
 from openai import OpenAI
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 
 
+from ggb.QwenAPI import encode_image_from_pil
 from gsamllavanav.observation import cropclient
 from gsamllavanav.defaultpaths import GSAM_MAPS_DIR
 from gsamllavanav.space import Point2D, Pose4D
@@ -28,19 +33,22 @@ class LandmarkNavMap(Map):
         gsam_params: GSamParams,
         id: tuple = {},
         grid_size_meters: float = 20.0,
+        save_path: str = 'results/geonav',
     ):
         super().__init__(map_name, map_shape, map_pixels_per_meter)
         self.step = 0
         self.id = id
+        self.save_path = save_path
         self.grid_size_meters = grid_size_meters
         self.grid_size_pixels = int(grid_size_meters * map_pixels_per_meter)
         # 预计算网格边界
         self.grid_x_min = - map_shape[1] // 2 / map_pixels_per_meter
         self.grid_y_min = -map_shape[0] // 2 / map_pixels_per_meter
 
-        # 地图历史
+        # todelete: 地图历史
         self.history_actions = ['None']
         self.history_AOI = ['None']
+        self.trajectory = [] # 存储历史Pose4D
 
         self.tracking_map = TrackingMap(map_name, map_shape, map_pixels_per_meter)
         self.landmark_map = LandmarkMap(map_name, map_shape, map_pixels_per_meter, landmark_names)
@@ -54,6 +62,7 @@ class LandmarkNavMap(Map):
         depth_perspective: Optional[np.ndarray] = None,
         use_gsam_map_cache=True,
     ):
+        self.trajectory.append(camera_pose)
         self.tracking_map.mark_current_view_area(camera_pose)
         if use_gsam_map_cache:
             self.target_map.update_from_map_cache(camera_pose)
@@ -133,59 +142,194 @@ class LandmarkNavMap(Map):
 
         return nav_map
     
-    # def plot(
-    #     self,
-    #     goal_description: str,
-    #     predicted_goal: Point2D,
-    #     true_goal: Point2D,
-    #     show=False,
-    # ):
-    #     import cv2
-    #     self.step += 1
-    #     predicted_goal_map = cv2.circle(
-    #         img=np.zeros(self.shape, dtype=np.float32),
-    #         center=self.to_row_col(predicted_goal)[::-1],
-    #         radius=4, color=1, thickness=-1
-    #     )
+    def _create_position_marker(self, point: Point2D) -> np.ndarray:
+        """创建位置标记图层"""
+        return cv2.circle(
+            np.zeros(self.shape, dtype=np.float32),
+            self.to_row_col(point)[::-1],
+            radius=4, color=1, thickness=-1
+        )
+    def _draw_layer(self, ax, layer, rgba):
+        """绘制单个透明图层"""
+        color_map = np.zeros((*layer.shape, 4), dtype=np.float32)
+        color_map[..., :3] = rgba[:3]
+        color_map[..., 3] = layer * rgba[3]
+        ax.imshow(color_map, alpha=0.5)
 
-    #     true_goal_map = cv2.circle(
-    #         img=np.zeros(self.shape, dtype=np.float32),
-    #         center=self.to_row_col(true_goal)[::-1],
-    #         radius=4, color=1, thickness=-1
-    #     )
+    def _merge_color_layers(self, ax, map_type) -> np.ndarray:
+        """优化版图层合并：关键元素优先显示+智能透明度控制"""
+        merged = np.zeros((*self.shape, 4), dtype=np.float32)
+        if map_type == 'w/o semantic map':
+            layers = [
+            (self.landmark_map.color_array, 1.0)
+        ]
+        elif map_type == 'w/o landmark map':
+            layers = [
+            (self.surroundings_map.color_array, 0.75),  # 环境层中等透明度
+            (self.target_map.color_array, 0.75)         # 目标层中等透明度
+        ]
+        # 调整叠加顺序：底层元素先绘制，关键元素最后叠加
+        else:
+            layers = [
+                (self.landmark_map.color_array, 1.0),      # 地标层较低透明度
+                (self.surroundings_map.color_array, 0.75),  # 环境层中等透明度
+                (self.target_map.color_array, 0.75)         # 目标层中等透明度
+            ]
 
-    #     titles = ['current view area', 'explored area', 'landmarks', 'target', 'surroundings', 'predicted goal', 'true goal']
-    #     maps = np.concatenate([self.to_array(), np.stack([predicted_goal_map, true_goal_map])])
+        for color_array, alpha in layers:
+            if color_array is None:
+                continue
+            ax.imshow(color_array, alpha=alpha)
+    
+        return merged
 
-    #     import matplotlib.pyplot as plt
-    #     from PIL import Image
-
-    #     fig, axs = plt.subplots(nrows=1, ncols=7, figsize=(35, 5), subplot_kw={'xticks': [], 'yticks': []})
-    #     fig.suptitle(f"{self.name}: {goal_description}")
-
-    #     for ax, title, m in zip(axs, titles, maps):
-    #         ax.imshow(m, cmap='viridis')
-    #         ax.set_title(title)
+    def _annotate_landmarks(self, ax):
+        """添加地标文字标注"""
+        for lm in self.landmark_map.landmarks:
+            x, y = self.to_row_col(lm.position.xy)
+            ax.text(y, x, lm.name, 
+                fontsize=10, color='black',
+                ha='center', va='center',
+                bbox=dict(facecolor='white', 
+                            alpha=0.8, 
+                            boxstyle='round'))
+    def _create_legend_elements(self) -> list:
+        """创建图例元素"""
+        elements = []
         
-    #     plt.tight_layout()
-    #     fig.canvas.draw()
-
-    #     if show:
-    #         plt.show()
+        # 地标图例（灰度轮廓）
+        for name, color in self.landmark_map.gray_colors.items():
+            elements.append(
+                Patch(facecolor=np.array(color[::-1])/255,
+                    edgecolor='gray',
+                    label=name,
+                    linestyle='-',
+                    linewidth=2)
+            )
         
-    #     plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
-    #     plt.savefig(f'results/test_landmap_00{self.step}.png')
-    #     plt.close(fig)
+        # 目标/环境图例
+        for phrase, color in {**self.target_map.semantic_colors, 
+                            **self.surroundings_map.semantic_colors}.items():
+            elements.append(
+                Patch(facecolor=np.array(color[:3])/255,
+                    label=phrase.capitalize())
+            )
         
-    #     return plot_img
+        return elements
 
+    def _render_output(self, fig, map_type) -> Image:
+        """渲染输出图像"""
+        fig.canvas.draw()
+        plot_img = Image.frombytes('RGB', 
+                                fig.canvas.get_width_height(),
+                                fig.canvas.tostring_rgb())
+        sanitized_map_type = map_type.replace(" ", "_").replace("/", "_")
+        plt.savefig(self.save_path+f'/{sanitized_map_type}_{self.id}_test_00{self.step}.png')
+        return encode_image_from_pil(plot_img)
     def plot(
+        self,
+        map_type
+    ):
+        
+        import numpy as np
+        self.step += 1
+        # 颜色配置（RGBA格式）
+        layer_colors = {
+            'current view area': (0.5, 0, 0.5, 0.3),   # 紫色
+        }
+        
+        # 合并地图数据
+        map_layers = np.concatenate([
+            np.expand_dims(self.to_array()[1],0),
+        ])
+
+        # 创建画布
+        fig, ax = plt.subplots(figsize=(10, 10))
+        fig = plt.figure(figsize=(10, 10), facecolor='white')
+        ax = fig.add_subplot(111)
+
+        # 绘制基础图层
+
+        self._merge_color_layers(ax, map_type)
+        # 添加地标标注
+        if map_type != 'w/o annotation':
+            self._annotate_landmarks(ax)
+        
+        # 合并颜色层（含灰度地标）
+        if map_type != 'w/o semantic map':
+            for idx, (layer_name, rgba) in enumerate(layer_colors.items()):
+                self._draw_layer(ax, map_layers[idx], rgba)
+        
+        # === 新增轨迹绘制逻辑 ===
+        # 绘制方向箭头
+        if map_type != 'w/o annotation':
+            arrow_length = 15  # 箭头长度（像素）
+            if len(self.trajectory) == 1:
+                pose = self.trajectory[0]
+                col, row = self.to_row_col(pose.xy)[::-1]
+                dx = arrow_length * np.cos(pose.yaw)
+                dy = - arrow_length * np.sin(pose.yaw)
+                ax.arrow(
+                        x=col, y=row,
+                        dx=dy, dy=dx,  # 注意坐标轴方向转换
+                        width=3, 
+                        head_width=8,
+                        head_length=10,
+                        fc='lime',  # 箭头填充色
+                        ec='darkgreen',  # 箭头边缘色
+                        alpha=0.8)  # 半透明箭头
+            elif len(self.trajectory) >1:
+                # 转换轨迹坐标
+                trajectory_points = [
+                    self.to_row_col(pose.xy)[::-1]  # 转换为(col, row)格式
+                    for pose in self.trajectory
+                ]
+                
+                # 绘制轨迹线
+                x_coords, y_coords = zip(*trajectory_points)
+                ax.plot(x_coords, y_coords, color = 'black', linestyle='--', linewidth=2.5, alpha=0.7)  # 白色虚线轨迹
+
+                prev_pose = trajectory_points[-2]
+                pose = trajectory_points[-1]
+                delta_x = pose[0] - prev_pose[0]
+                delta_y = pose[1] - prev_pose[1]
+                theta = np.arctan2(delta_y, delta_x)  # 箭头角度是上一位置到当前位置的角度
+                col, row = pose
+                
+                # 计算箭头方向
+                dx = arrow_length * np.cos(theta)
+                dy = arrow_length * np.sin(theta)
+                
+                ax.arrow(
+                    x=col, y=row,
+                    dx=dx, dy=dy,  # 注意坐标轴方向转换
+                    width=3, 
+                    head_width=8,
+                    head_length=10,
+                    fc='lime',  # 箭头填充色
+                    ec='darkgreen',  # 箭头边缘色
+                    alpha=0.4)  # 半透明箭头
+            
+        # 创建图例
+        if map_type != 'w/o semantic map':
+            legend_elements = self._create_legend_elements()
+            ax.legend(handles=legend_elements, 
+                    loc='upper center',
+                    bbox_to_anchor=(0.5, -0.05),
+                    ncol=3)
+
+        # 生成输出图像
+        plot_img = self._render_output(fig, map_type)
+        plt.close('all')
+        
+        return plot_img
+    
+    def vanilla_plot(
         self,
         goal_description: str,
         start_point: Point2D,
-        current_pose: Pose4D,
+        true_goal: Point2D,
         show: bool =False,
-        with_grid: bool = True
     ):
         import cv2
         import matplotlib.pyplot as plt
@@ -193,17 +337,16 @@ class LandmarkNavMap(Map):
         from PIL import Image
         import numpy as np
 
-        self.step += 1
 
         # 定义颜色和透明度 (RGBA 格式: R, G, B, Alpha)
         colors = {
-            'current view area': (0, 0, 1, 0.2),  # 蓝色，透明度0.3
-            'explored area': (0, 1, 0, 0.2),     # 绿色，透明度0.3
+            'current view area': (0, 0, 1, 0.3),  # 蓝色，透明度0.3
+            'explored area': (0, 1, 0, 0.3),     # 绿色，透明度0.3
             'landmarks': (1, 0, 0, 0.3),         # 红色，透明度0.3
             'target': (0, 1, 1, 0.5),            # 青色，透明度0.3
             'surroundings': (1, 0, 1, 0.3),      # 洋红色，透明度0.3
             'start point': (1, 1, 0, 1.0),    # 黄色，透明度0.6
-            'current pose': (1, 0.5, 0, 1.0)        # 橙色，透明度0.6
+            'true goal': (1, 0.5, 0, 1.0)        # 橙色，透明度0.6
         }
 
         start_point_map = cv2.circle(
@@ -212,13 +355,15 @@ class LandmarkNavMap(Map):
             radius=4, color=1, thickness=-1
         )
         
-        current_pose_map = cv2.circle(
+
+        refer_point_map = cv2.circle(
             img=np.zeros(self.shape, dtype=np.float32),
-            center=self.to_row_col(current_pose.xy)[::-1],
-            radius=4, color=1, thickness=-1
+            center=self.to_row_col(true_goal)[::-1],
+            radius=6, color=1, thickness=1, lineType=cv2.LINE_AA
         )
+
         # 获取地图数据 (shape 为 [7, 240, 240])
-        maps = np.concatenate([self.to_array(), np.stack([start_point_map, current_pose_map])])
+        maps = np.concatenate([self.to_array(), np.stack([start_point_map, refer_point_map])])
 
         # 创建绘图
         fig, ax = plt.subplots(figsize=(10, 10))
@@ -243,38 +388,35 @@ class LandmarkNavMap(Map):
         # y_ticks = np.arange(0, height, grid_size)
         # ax.set_xticks(x_ticks, minor=True)
         # ax.set_yticks(y_ticks, minor=True)
-        if with_grid==True:
-            # 绘制网格线
-            ax.grid(True, which='both', color='gray', linestyle='--', linewidth=0.6, alpha=0.3)
-            ax.set_xticks(np.arange(0, width, self.grid_size_pixels))
-            ax.set_yticks(np.arange(0, height, self.grid_size_pixels))
-            # ax.set_xticklabels([f'{x:.1f}' for x in ax.get_xticks()])
-            # ax.set_yticklabels([f'{y:.1f}' for y in ax.get_yticks()])
-            grid_size_pixels = self.grid_size_pixels
-            for i in range(0, self.shape[1], grid_size_pixels):
-                for j in range(0, self.shape[0], grid_size_pixels):
-                    # 计算当前网格的字母和数字编号
-                    col = chr(ord('A') + i // grid_size_pixels)
-                    row = (j // grid_size_pixels) + 1
-                    grid_id = f"{col}{row}"
-                    
-                    # 在网格中心位置添加文本
-                    ax.text(
-                        x=i + grid_size_pixels/2, 
-                        y=j + grid_size_pixels/2, 
-                        s=grid_id,
-                        color='gray',  # 使用浅色
-                        fontsize=8,    # 小字号
-                        ha='center', 
-                        va='center',
-                        alpha=0.9      # 半透明
-                    )
+        # 绘制网格线
+        ax.grid(True, which='both', color='gray', linestyle='--', linewidth=0.6, alpha=0.3)
+        ax.set_xticks(np.arange(0, width, self.grid_size_pixels))
+        ax.set_yticks(np.arange(0, height, self.grid_size_pixels))
+        # ax.set_xticklabels([f'{x:.1f}' for x in ax.get_xticks()])
+        # ax.set_yticklabels([f'{y:.1f}' for y in ax.get_yticks()])
+        grid_size_pixels = self.grid_size_pixels
+        for i in range(0, self.shape[1], grid_size_pixels):
+            for j in range(0, self.shape[0], grid_size_pixels):
+                # 计算当前网格的字母和数字编号
+                col = chr(ord('A') + i // grid_size_pixels)
+                row = (j // grid_size_pixels) + 1
+                grid_id = f"{col}{row}"
+                
+                # 在网格中心位置添加文本
+                ax.text(
+                    x=i + grid_size_pixels/2, 
+                    y=j + grid_size_pixels/2, 
+                    s=grid_id,
+                    color='gray',  # 使用浅色避免喧宾夺主
+                    fontsize=8,    # 小字号
+                    ha='center', 
+                    va='center',
+                    alpha=0.9      # 半透明
+                )
         
         for landmark in self.landmark_map.landmarks:
             x, y = self.to_row_col(landmark.position.xy)
             ax.text(y, x, landmark.name, fontsize=10, color='black', ha='center', va='center', bbox=dict(facecolor='gray', alpha=0.5, pad=1, boxstyle='round'))
-        dx, dy = 10 * np.cos(current_pose.yaw), 10 * np.sin(current_pose.yaw) # 无人机方向箭头
-        ax.arrow(self.to_row_col(current_pose.xy)[1], self.to_row_col(current_pose.xy)[0], dy, dx, width=0.2, head_width=1, head_length=0.5, fc='orange', ec='orange')
 
         # 添加图例
         legend_elements = [
@@ -290,9 +432,9 @@ class LandmarkNavMap(Map):
         # 将绘制的画布转换为 PIL 图像
         plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
         plot_img = plot_img.resize((224,224))
-        plt.savefig(f'results/finetuned_rationale/landmap_{self.id}_test_00{self.step}.png')
-        from ggb.QwenAPI import encode_image_from_pil
-        rgb = Image.open(f'results/finetuned_rationale/landmap_{self.id}_test_00{self.step}.png')
+        plt.savefig(f'results/vanilla/landmap_{self.id}_groundtruth_00{self.step}.png')
+
+        rgb = Image.open(f'results/vanilla/landmap_{self.id}_test_00{self.step}.png')
         # 示例用法
         base64_string = encode_image_from_pil(rgb)
         plt.close(fig)
@@ -407,13 +549,17 @@ class LandmarkNavMap(Map):
         # 将绘制的画布转换为 PIL 图像
         plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
         plot_img = plot_img.resize((224,224))
-        plt.savefig(f'results/finetuned_rationale/landmap_{self.id}_groundtruth_00{self.step}.png')
+        plt.savefig(f'results/grid/landmap_{self.id}_groundtruth_00{self.step}.png')
 
+        rgb = Image.open(f'results/grid/landmap_{self.id}_test_00{self.step}.png')
+        # 示例用法
+        base64_string = encode_image_from_pil(rgb)
         plt.close(fig)
 
-        return
-    def integrate_prior_knowledge(self, target_description: str, task_prior_knowledge: dict, rationale: str):
+        return base64_string
+    def pixel_knowledge(self, target_description: str, task_prior_knowledge: dict, rationale: str):
         #'vanilla', 'spatial_rationale', 'ours'
+        # 
         if rationale == 'vanilla':
             Easy_prompt = f"""Role: You are a High-Level Decision-Making Agent for drone navigation.Your task is to analyze multi-modal inputs (visual map + textual knowledge) to determine whether to explore unknown areas or focus on target localization. Task: {target_description}"""+ """
     ---

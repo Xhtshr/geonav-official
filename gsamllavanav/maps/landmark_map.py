@@ -22,13 +22,32 @@ class LandmarkMap(Map):
         self.landmark_names = landmark_names
         self.landmarks = LandmarkMap._search_landmarks_by_name(map_name, landmark_names)
 
+        # 新增灰度颜色配置
+        self.gray_colors = self._generate_gray_colors()
+        self.color_array = np.zeros((*map_shape, 4), dtype=np.uint8)  # 改为四通道
+
         self.landmark_map = np.zeros(map_shape, dtype=np.uint8)
-        for lm in self.landmarks:
-            self.landmark_map = cv2.fillPoly(
-                img=self.landmark_map ,
-                pts=[np.stack(self.to_rows_cols(lm.contour))[::-1].T],
-                color=1
+        for lm, color in zip(self.landmarks, self.gray_colors.values()):
+            # 转换轮廓坐标为图像坐标
+            pts = np.stack(self.to_rows_cols(lm.contour))[::-1].T  # [N,2]数组
+            
+            # 绘制彩色轮廓
+            cv2.polylines(
+            img=self.color_array,
+            pts=[pts.astype(np.int32)],
+            isClosed=True,
+            color=(*color, 255),  # 添加alpha通道
+            thickness=2
             )
+    def _generate_gray_colors(self):
+        """为每个地标生成唯一颜色（HSV色轮算法）"""
+        """生成渐变灰度色（从浅灰到深灰）"""
+        base_gray = 200  # 提高基础灰度值
+        gray_step = 30   # 减小级差
+        return {
+            name: (base_gray - i*gray_step, )*3
+            for i, name in enumerate(self.landmark_names)
+        }
     
     def to_array(self, dtype=np.float32) -> np.ndarray:
         return self.landmark_map[np.newaxis].astype(dtype)

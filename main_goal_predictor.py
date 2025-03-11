@@ -3,7 +3,7 @@ import json
 import torch
 
 from gsamllavanav.parser import parse_args
-from gsamllavanav.evaluate import eval_goal_predictor
+from gsamllavanav.evaluate import eval_goal_predictor, eval_planning_metrics
 from gsamllavanav.cityreferobject import get_city_refer_objects
 from gsamllavanav.dataset.generate import generate_episodes_from_mturk_trajectories
 from gsamllavanav.dataset.mturk_trajectory import load_mturk_trajectories
@@ -49,7 +49,7 @@ if args.mode == 'eval':
 
     for split in ('val_seen', 'val_unseen', 'test_unseen'):
         
-        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'new', args.altitude))
+        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'easy_simpled', args.altitude))
 
         trajectory_logs, pred_goal_logs, pred_progress_logs = run_episodes_batch(args, model, test_episodes, DEVICE)
 
@@ -57,9 +57,9 @@ if args.mode == 'eval':
         for eps_id, pose in predicted_positions.items():
             trajectory_logs[eps_id].append(pose)
         
-        metrics = eval_goal_predictor(args, test_episodes, trajectory_logs, pred_goal_logs, pred_progress_logs)
+        metrics = eval_planning_metrics(args, test_episodes, trajectory_logs)
 
-        print(f"{split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}")
+        print(f"{split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}, {metrics.success_rate_weighted_by_path_length*100: .2f}")
         
         noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
         alt_env = f"_{args.alt_env}" if args.alt_env else ""

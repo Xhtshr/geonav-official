@@ -8,82 +8,72 @@ def create_prompt(instruction):
 - Target: The main object or location to be navigated to. And list its attributes such as color, shape, etc.
 - Landmarks: Any referenced Geosptial names that help identify the target's position. Note that landmarks are usually capitalized names of streets, roads, etc. List the relationships between the target and landmarks, and mention the secondary landmarks if the target near the intersection of two landmarks.
 - Surrounding: Any referenced objects, environmental or contextual information not part of the main landmarks but provides additional clues.
-- Spatial Relationships with objects: The spatial and positional relationships between the target and landmarks.
+- Spatial Relationships with objects: The spatial and positional relationships between the target and landmarks. Provide your answer in JSON format.
 
-Provide your answer in JSON format.
-{
-  "Target": {
-    "object": "class_name",
-    "attribute":{
-        "attribute 1": "value 1",
+**Required Output Format**  
+    ```json
+{{
+  "Target": {{
+    "class": "class_name", # object class should be typical, e.g. car, building, etc.
+    "attribute":{{
+        "attribute 1": "value 1", # optional
         "attribute 2": "value 2",
         ...
-    }
-  },
-  "Relationships with Landmarks": {
+    }}
+  }},
+  "Relationships with Landmarks": {{
     "intersection": ["Landmark 1", "Landmark 2",...], # return none if no intersection
-    "Landmark":{
+    "Landmark":{{
         "Landmark 1": "relationship",
         "Landmark 2": "relationship,
        ... 
-    }
-  },
-  "Surrounding": ["object 1", "object 2", ...],
-  "Spatial_Relationships with objects": [
-    "the relationship between target and objects",
-    "the relationship between object 1 and object 2",
-    "the relationship between object 2 and object 3",
-    ...
-  ]
-}
+    }}
+  }},
+  "Surrounding": ["object_class 1", "object_class 2", ...]
+}}```
 
 
 Example:
 Instruction: "A white car behind a black car, with a black car across from it on the opposite side of Willmore Road facing the edge of the map, in between two identical multi-housing units."
+**Required json Format**  
 Extracted:
-{
-  "Target": {
-    "object": "car",
-    "attribute":{
+```json
+{{
+  "Target": {{
+    "class": "car",
+    "attribute":{{
         "color": "white",
-    }
-  },
-  "Relationships with Landmarks": {
+    }}
+  }},
+  "Relationships with Landmarks": {{
     "intersection": null, # return null if no intersection
-    "Landmark":{
+    "Landmark":{{
             "Willmore Road": "on the Willmore Road",
-        }
-  },
-  "Surrounding": ["black car", "multi-housing units"],
-  "Spatial_Relationships with objects": [
-    "white car is behind black car",
-    "black car is across from white car on the opposite side of Willmore Road",
-    "black car is facing the edge of the map",
-    "white car is in between two identical multi-housing units"
-  ]
-}
+        }}
+  }},
+  "Surrounding": ["car", "multi-housing units"]
+}}```
 
 Instruction: "A dark blue car near the corner of Beche Road and Priory Road next to the Cellarer's Chequer building"
-{
-  "Target": {
-    "object_class": "car",
-    "attribute":{
+**Required json Format**  
+```json
+{{
+  "Target": {{
+    "class": "car",
+    "attribute":{{
         "color": "dark blue",
-    }
-  },
-  "Relationships with Landmarks": {
+    }}
+  }},
+  "Relationships with Landmarks": {{
     "intersection": ["Beche Road", "Priory Road"], # return none if no intersection
-    "Landmark":{
+    "Landmark":{{
         "Beche Road": "near the Beche Road",
         "Priory Road": "near the Priory Road",
         "Cellarer's Chequer": "next to the Cellarer's Chequer building"
-    }
-  },
-  "Surrounding": ["buildings"],
-  "Spatial_Relationships with objects": [
-    "The dark blue car is next to the Cellarer's Chequer building"
-  ]
-}
+    }}
+  }},
+  "Surrounding": ["building"]
+}}```
 """ + """Now process the following instruction: {}""".format(instruction)
 
 # 调用 OpenAI GPT 模型
@@ -97,9 +87,9 @@ def gpt_api_call(prompt):
         base_url=os.environ.get("OPENAI_BASE_URL"),
     )
     response = client.chat.completions.create(
-        model="qwen-max",
+        model="qwen-max-latest",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.1  # 设置为 0.0 以确保解析的稳定性
+        temperature=0.0  # 设置为 0.0 以确保解析的稳定性
     )
     return response.choices[0].message.content
 

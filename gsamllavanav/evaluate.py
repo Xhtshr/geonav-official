@@ -30,7 +30,7 @@ class GoalPredictorMetrics:
     success_rate_oracle_pred_to_goal: float = 0.
     mean_progress_mse: float = np.inf
     mean_final_progress_mse: float = np.inf
-    
+    success_rate_weighted_by_path_length: float = 0.
     @classmethod
     def names(cls):
         return list(asdict(cls()))
@@ -86,34 +86,64 @@ def eval_goal_predictor(
 
     return metrics
 
+
+
 def eval_planning_metrics(
     args: ExperimentArgs,
     episodes: list[Episode],
     trajectory_logs: dict[EpisodeID, list[Pose4D]]
 ):
-    # metrics based on distance to goal
-    final_pos_to_goal_dists = np.array([trajectory_logs[eps.id][-1].xy.dist_to(eps.target_position.xy) for eps in episodes])
+    # 计算路径长度的辅助函数
+    def calculate_path_length(trajectory: list[Pose4D]) -> float:
+        if len(trajectory) < 2:
+            return 0.0
+        return sum(
+            curr.xy.dist_to(prev.xy)
+            for curr, prev in zip(trajectory[1:], trajectory[:-1])
+        )
 
-    # metrics based on path
-    def oracle_distance(goal: Point2D, trajectory: list[Point2D]) -> float:
-        goal = np.array(goal)
-        trajectory = np.array(trajectory)
-        distances = np.linalg.norm(goal - trajectory, axis=-1)
-        return distances.min()
-    
-    oracle_pos_to_goal_dists = np.array([oracle_distance(eps.target_position.xy, [pose.xy for pose in trajectory_logs[eps.id]]) for eps in episodes])
-    
+    # 初始化SPL计算相关变量
+    spl_values = []
+    final_pos_to_goal_dists = []
+    oracle_pos_to_goal_dists = []
 
+    for eps in episodes:
+        trajectory = trajectory_logs[eps.id]
+        
+        # 最终位置到目标的距离
+        final_dist = trajectory[-1].xy.dist_to(eps.target_position.xy)
+        final_pos_to_goal_dists.append(final_dist)
+        
+        # Oracle距离
+        trajectory_xy = [pose.xy for pose in trajectory]
+        oracle_dist = min(p.dist_to(eps.target_position.xy) for p in trajectory_xy)
+        oracle_pos_to_goal_dists.append(oracle_dist)
+        
+        # 计算SPL（修复optimal_length取值）
+        success = float(final_dist <= args.success_dist)
+        path_length = calculate_path_length(trajectory)
+        optimal_length = eps.target_position.xy.dist_to(eps.start_pose.xy)
+        
+        # 处理分母为0的情况
+        denominator = max(path_length, optimal_length)
+        spl = success * optimal_length / denominator if denominator > 0 else 0
+        spl_values.append(spl)
+    print(np.array(final_pos_to_goal_dists))
+    print(success)
+    # 构建指标对象（补充必要字段）
     metrics = GoalPredictorMetrics(
-        final_pos_to_goal_dists.mean(),
-        np.inf,
-        (final_pos_to_goal_dists <= args.success_dist).mean(),
-        0,
-        oracle_pos_to_goal_dists.mean(),
-        np.inf,
-        (oracle_pos_to_goal_dists <= args.success_dist).mean(),
-        0,
-        np.inf, np.inf
+        mean_final_pos_to_goal_dist=np.mean(final_pos_to_goal_dists),
+        success_rate_final_pos_to_goal=(np.array(final_pos_to_goal_dists) <= args.success_dist).mean(),
+        mean_oracle_pos_to_goal_dist=np.mean(oracle_pos_to_goal_dists),
+        success_rate_oracle_pos_to_goal=(np.array(oracle_pos_to_goal_dists) <= args.success_dist).mean(),
+        success_rate_weighted_by_path_length=np.mean(spl_values),
+        # 其他字段保持默认值
+        mean_final_pred_to_goal_dist=np.inf,
+        success_rate_final_pred_to_goal=0,
+        mean_oracle_pred_to_goal_dist=np.inf,
+        success_rate_oracle_pred_to_goal=0,
+        mean_progress_mse=np.inf,
+        mean_final_progress_mse=np.inf
     )
 
     return metrics

@@ -31,9 +31,9 @@ if args.mode == 'eval':
     if args.checkpoint:
         policy.load_state_dict(torch.load(args.checkpoint)['policy_state_dict'])
 
-    for split in ('val_seen', 'val_unseen', 'test_unseen'):
+    for split in ('val_seen', 'val_unseen', 'test_unseen'):#, 'val_unseen', 'test_unseen'
 
-        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'all'))
+        test_episodes = generate_episodes_from_mturk_trajectories(objects, load_mturk_trajectories(split, 'easy_simpled'))#easy_simpled
         action_logs, trajectory_logs, eval_metrics = eval_policy(policy, test_episodes, args, DEVICE, return_logs=True)
 
         print(f"{split} -- {eval_metrics.navigation_error: .1f}, {eval_metrics.success_rate*100: .2f}, {eval_metrics.oracle_success_rate*100: .2f}, {eval_metrics.success_rate_weighted_by_path_length*100: .2f}")

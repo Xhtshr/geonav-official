@@ -10,7 +10,7 @@ from vlnce.mapdata import GROUND_LEVEL
 
 
 MturkSplit = Literal['train_seen', 'val_seen', 'val_unseen', 'test_unseen']
-MturkDifficulty = Literal['easy', 'medium', 'hard', 'all']
+MturkDifficulty = Literal['easy', 'medium', 'hard', 'all', 'new', 'easy_simpled', 'medium_simpled', 'hard_simpled']
 
 
 def load_mturk_trajectories(split: MturkSplit, difficulty: MturkDifficulty, fix_altitude: Optional[float] = None, trajectory_dir=MTURK_TRAJECTORY_DIR):
