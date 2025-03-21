@@ -1048,20 +1048,21 @@ class GeonavAgent(Agent):
                             true_goal=self.episode.target_position.xy,
                             show=False
                         )
-                # Step 3: Plan to explore or locate
+                # Step 3: Mission Planning
                 planner_prompt = self.prompts["planner_prompt"].format(instruction=self.episode.target_description, current_step=self.controller.timestep)
                 self.plan = self.call_response(task_prompt, planner_prompt, [semap_img])
                 print(f"plan: {self.plan}")
-                # step 4: Deep into explore
+                # Step 4: Conduct the subgoals
                 target_json = extract_json_from_msg(self.plan)
-                # Retry
+                # Step 5: Choose strategy to exectue the goal
+                # Navigation, exploration, exploitation
                 while target_json is None:
                     print('Retry generating plan')
                     self.plan = self.call_response(task_prompt, planner_prompt, [semap_img])
                     target_json = extract_json_from_msg(self.plan)
                 
                 next_pos = self.get_next_position(target_json, image_list, observation_prompt, task_prompt)
-                # Step 4: 生成动作
+                # Step 6: Generate the next position
                 print(f"next_pos: {next_pos}")
                 self.controller.pose = Pose4D(next_pos[0],next_pos[1],self.controller.pose.z, self.controller.pose.yaw)
             
