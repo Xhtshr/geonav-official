@@ -114,29 +114,40 @@ def xyxy_to_global_bbox(
     ground_level: float
 ):
     x1, y1, x2, y2 = xyxy
+    n_rows, n_cols = image_size
 
+    # 坐标系修正关键步骤
+    # 将像素坐标转换为以图像中心为原点的坐标系
+    center_col = n_cols / 2
+    center_row = n_rows / 2
+    
+    # 转换为相对于图像中心的坐标（单位：像素）
     bbox_corners_col_row = np.array([
-        [x1, y1],
-        [x2, y1],
-        [x2, y2],
-        [x1, y2],
+        [x1 - center_col, y1 - center_row],
+        [x2 - center_col, y1 - center_row],
+        [x2 - center_col, y2 - center_row],
+        [x1 - center_col, y2 - center_row],
     ])
 
-    n_rows, n_cols =  image_size
-
+    # 计算物理参数
     cos, sin = np.cos(pose.yaw), np.sin(pose.yaw)
-    front = np.array([cos, sin])
-    left = np.array([-sin, cos])
-    center = np.array([pose.x, pose.y])
+    front = np.array([cos, sin])   # 相机前向方向
+    left = np.array([-sin, cos])   # 相机左向方向
     view_area_size = pose.z - ground_level
     
-    xy_per_row = - (view_area_size / n_rows) * front
-    xy_per_col = - (view_area_size / n_cols) * left
+    # 计算每个像素对应的物理尺寸（米/像素）
+    meter_per_pixel_col = view_area_size / n_cols  # 列方向（左右）
+    meter_per_pixel_row = view_area_size / n_rows  # 行方向（前后）
 
-    bbox_corners_xy = center + bbox_corners_col_row @ np.stack([xy_per_row, xy_per_col])
-    bbox_corners_xy = [Point2D(x, y) for x, y in bbox_corners_xy]
+    # 构建坐标变换矩阵
+    transform_matrix = np.stack([
+        meter_per_pixel_col * left,    # x 轴分量（左方向）
+        -meter_per_pixel_row * front   # y 轴分量（前方向反，因为图像行坐标向下增长）
+    ], axis=1)
 
-    return bbox_corners_xy
+    # 执行坐标变换
+    global_points = pose.xy + bbox_corners_col_row @ transform_matrix
+    return [Point2D(x, y) for x, y in global_points]
 
 
 def modulo_radians(theta: float):

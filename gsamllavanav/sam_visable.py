@@ -31,7 +31,7 @@ def show_box(box, ax):
 
 def show_waypoints(coords1, coords2, ax, marker_size=50):
     ax.scatter(coords1[:, 0], coords1[:, 1], color='green', marker='*', s=marker_size, edgecolor='white', linewidth=0.25)
-    ax.scatter(coords2[:, 0], coords2[:, 1], color='red', marker='o', s=marker_size, edgecolor='white', linewidth=0.25)
+    # ax.scatter(coords2[:, 0], coords2[:, 1], color='red', marker='o', s=marker_size, edgecolor='white', linewidth=0.25)
 
 from segment_anything import SamPredictor, sam_model_registry, SamAutomaticMaskGenerator
 import rasterio
@@ -134,41 +134,42 @@ for mask in masks:
 print("centroids:", centroids)
 
 edge_points = []
-for mask in masks:
-    bbox = mask['bbox']
-    x_min, y_min, width, height = bbox
-    edge_points.extend([
-        [x_min, y_min],
-        [x_min + width, y_min],
-        [x_min, y_min + height],
-        [x_min + width, y_min + height],
-    ])
+# for mask in masks:
+#     bbox = mask['bbox']
+#     x_min, y_min, width, height = bbox
+#     edge_points.extend([
+#         [x_min, y_min],
+#         [x_min + width, y_min],
+#         [x_min, y_min + height],
+#         [x_min + width, y_min + height],
+#     ])
 
 plt.figure(figsize=(10,10))
 plt.imshow(image)
+
 show_waypoints(np.array(centroids),np.array(edge_points),plt.gca())
 plt.axis('off')
 plt.show()
 # 每条边均匀取样点
-num_samples = 5  # 每条边取样点数
-sampled_points = []
-for mask in masks:
-    bbox = mask['bbox']
-    x_min, y_min, width, height = bbox
-    x_max, y_max = x_min + width, y_min + height
+# num_samples = 5  # 每条边取样点数
+# sampled_points = []
+# for mask in masks:
+#     bbox = mask['bbox']
+#     x_min, y_min, width, height = bbox
+#     x_max, y_max = x_min + width, y_min + height
 
-    # 水平边界取样（上边和下边）
-    top_edge = [(x, y_min) for x in np.linspace(x_min, x_max, num_samples)]
-    bottom_edge = [(x, y_max) for x in np.linspace(x_min, x_max, num_samples)]
+#     # 水平边界取样（上边和下边）
+#     top_edge = [(x, y_min) for x in np.linspace(x_min, x_max, num_samples)]
+#     bottom_edge = [(x, y_max) for x in np.linspace(x_min, x_max, num_samples)]
 
-    # 垂直边界取样（左边和右边）
-    left_edge = [(x_min, y) for y in np.linspace(y_min, y_max, num_samples)]
-    right_edge = [(x_max, y) for y in np.linspace(y_min, y_max, num_samples)]
+#     # 垂直边界取样（左边和右边）
+#     left_edge = [(x_min, y) for y in np.linspace(y_min, y_max, num_samples)]
+#     right_edge = [(x_max, y) for y in np.linspace(y_min, y_max, num_samples)]
 
-    # 合并四条边的点
-    sampled_points.extend(top_edge + bottom_edge + left_edge + right_edge)
+#     # 合并四条边的点
+#     sampled_points.extend(top_edge + bottom_edge + left_edge + right_edge)
 
-print("边界均匀取样点:", sampled_points)
+# print("边界均匀取样点:", sampled_points)
 
 # # 结合深度信息选择特征点
 # from scipy.ndimage import sobel

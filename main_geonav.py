@@ -32,7 +32,7 @@ if args.mode == 'eval':
         # 测试整个split的所有样例
         test_episodes = generate_episodes_from_mturk_trajectories(
             objects,
-            load_mturk_trajectories(args.split, 'new', args.altitude),
+            load_mturk_trajectories(args.split, 'easy_simpled_0', args.altitude),
             max_episodes=None
         )
     # 选择规划器运动至 landmark质点位置
@@ -86,37 +86,45 @@ if args.mode == 'eval':
     VLM_backbone = 'GPT' # visual model
     LLM_backbone = 'Qwen-online' # language model
     vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
-    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"
+    ll_api_key = "sk-ca477c37e2214255a5498915ea609ae5"
 
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
-
+    strategy_distance_records = {
+        'Start': [],
+        'Navigate': [],
+        'Search': [],
+        'Locate': []
+    }
     for episode in test_episodes:
         # 创建Agent实例
         agent = GeonavAgent(args, episode.start_pose, episode, vlmodel, set_height=None)
         # 设置目标
-        agent.set_target(episode.target_position)  # 假设目标是episode的target_position
+        agent.set_target(episode.target_position) # 假设目标是episode的target_position
         # 运行Agent
         res, trajectory_log = agent.run()
+        # 更新元组中的距离信息
+        for strategy in strategy_distance_records.keys():
+            if strategy in agent.strategy_distances:
+                strategy_distance_records[strategy].append(agent.strategy_distances[strategy])
         results.append(res)
         trajectory_logs[episode.id] = trajectory_log
-    # results 里面是true or false,计算正确率
-    accuracy = sum(results) / len(results) if results else 0
-    print(f"Accuracy: {accuracy * 100:.2f}%")
-    
-    # # 使用VLM推断目标位置
-    # predicted_positions = (goal_selection_gdino if args.eval_goal_selector == 'gdino' else goal_selection_llava)(args, pred_goal_logs)
-    # for eps_id, pose in predicted_positions.items():
-    #     trajectory_logs[eps_id].append(pose)
+        # 累积运行结果
+        agent.strategy_distances
     
     metrics = eval_planning_metrics(args, test_episodes, trajectory_logs)
 
     print(f"{args.split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}metrics")
-    
+    for strategy, distances in strategy_distance_records.items():
+        if distances:  # 确保列表不为空
+            avg_distance = sum(distances) / len(distances)
+            print(f"Average distance for {strategy} : {avg_distance:.2f} (meters)")
+        else:
+            print(f"No data available for {strategy}")
     noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
     alt_env = f"_{args.alt_env}" if args.alt_env else ""
     with open(f'geonav_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
         json.dump({
             'metrics': metrics.to_dict(),
             'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},
+            'strategy_averages': {k: (sum(v)/len(v) if len(v)>0 else None) for k,v in strategy_distance_records.items()}
         }, f)
-

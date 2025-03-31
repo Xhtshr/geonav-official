@@ -15,6 +15,7 @@ from gsamllavanav.observation import cropclient
 from gsamllavanav.defaultpaths import GSAM_MAPS_DIR
 from gsamllavanav.space import Point2D, Pose4D
 from gsamllavanav.dataset.episode import Episode
+from scenegraphnav.city_scene_graph import QueryEngine
 
 from .map import Map
 from .tracking_map import TrackingMap
@@ -52,8 +53,8 @@ class LandmarkNavMap(Map):
 
         self.tracking_map = TrackingMap(map_name, map_shape, map_pixels_per_meter)
         self.landmark_map = LandmarkMap(map_name, map_shape, map_pixels_per_meter, landmark_names)
-        self.target_map = GSamMap(map_name, map_shape, map_pixels_per_meter, [target_name], gsam_params)
-        self.surroundings_map = GSamMap(map_name, map_shape, map_pixels_per_meter, surroundings_names, gsam_params)
+        self.target_map = GSamMap(map_name, map_shape, map_pixels_per_meter, [target_name], gsam_params, layer='target')
+        self.surroundings_map = GSamMap(map_name, map_shape, map_pixels_per_meter, surroundings_names, gsam_params, layer='surroundings')
     
     def update_observations(
         self,
@@ -61,6 +62,7 @@ class LandmarkNavMap(Map):
         rgb: np.ndarray,
         depth_perspective: Optional[np.ndarray] = None,
         use_gsam_map_cache=True,
+        strategy='',
     ):
         self.trajectory.append(camera_pose)
         self.tracking_map.mark_current_view_area(camera_pose)
@@ -68,8 +70,8 @@ class LandmarkNavMap(Map):
             self.target_map.update_from_map_cache(camera_pose)
             self.surroundings_map.update_from_map_cache(camera_pose)
         else:
-            self.target_map.update_observation(camera_pose, rgb[..., ::-1], depth_perspective)
-            self.surroundings_map.update_observation(camera_pose, rgb[..., ::-1], depth_perspective)
+            self.target_map.update_observation(camera_pose, rgb[..., ::-1], depth_perspective, strategy=strategy)
+            self.surroundings_map.update_observation(camera_pose, rgb[..., ::-1], depth_perspective, strategy=strategy)
 
     def to_array(self, dtype=np.float32) -> np.ndarray:
         return np.concatenate([
@@ -159,16 +161,16 @@ class LandmarkNavMap(Map):
     def _merge_color_layers(self, ax, map_type) -> np.ndarray:
         """优化版图层合并：关键元素优先显示+智能透明度控制"""
         merged = np.zeros((*self.shape, 4), dtype=np.float32)
-        if map_type == 'w/o semantic map':
+        if map_type == 'landmark':
             layers = [
-            (self.landmark_map.color_array, 1.0)
+            (self.landmark_map.color_array, 1.0) # 地标层不透明
         ]
-        elif map_type == 'w/o landmark map':
-            layers = [
-            (self.surroundings_map.color_array, 0.75),  # 环境层中等透明度
-            (self.target_map.color_array, 0.75)         # 目标层中等透明度
-        ]
-        # 调整叠加顺序：底层元素先绘制，关键元素最后叠加
+        # elif map_type == 'semantic':
+        #     layers = [
+        #     (self.surroundings_map.color_array, 0.75),  # 环境层中等透明度
+        #     (self.target_map.color_array, 0.75)         # 目标层中等透明度
+        # ]
+        # # 调整叠加顺序：底层元素先绘制，关键元素最后叠加
         else:
             layers = [
                 (self.landmark_map.color_array, 1.0),      # 地标层较低透明度
@@ -193,6 +195,43 @@ class LandmarkNavMap(Map):
                 bbox=dict(facecolor='white', 
                             alpha=0.8, 
                             boxstyle='round'))
+    
+    def _annotate_objects(self, ax, query_engine: QueryEngine, current_pos: Point2D):
+        """动态标注物体节点"""
+        context = query_engine.get_context(current_pos, radius=500.0)
+        for item in context:
+            if item['type'] == 'object':  # 只处理物体节点
+                obj_id = item.get('id', 'Unknown')
+                target = item.get('target', False)
+                # 转换物体位置到像素坐标
+                pos = query_engine.graph.nodes[obj_id].position
+                
+                x, y = self.to_row_col(pos)
+                if target:
+                    ax.text(
+                        y, x, 
+                        f"{obj_id}",
+                        fontsize=10, color='red',
+                        ha='center', va='center',
+                        bbox=dict(
+                            facecolor='white',  # 洋红背景
+                            alpha=0.5,
+                            boxstyle='round'
+                        )
+                    )
+                else:
+                    # 添加标注
+                    ax.text(
+                        y, x, 
+                        f"{obj_id}",
+                        fontsize=10, color='black',
+                        ha='center', va='center',
+                        bbox=dict(
+                            facecolor='white',  # 青色背景
+                            alpha=0.5,
+                            boxstyle='round'
+                        )
+                    )
     def _create_legend_elements(self) -> list:
         """创建图例元素"""
         elements = []
@@ -218,7 +257,7 @@ class LandmarkNavMap(Map):
         return elements
 
     def _render_output(self, fig, map_type) -> Image:
-        """渲染输出图像"""
+        """渲染输出图像,仅在topdown模式下保存"""
         fig.canvas.draw()
         plot_img = Image.frombytes('RGB', 
                                 fig.canvas.get_width_height(),
@@ -226,13 +265,14 @@ class LandmarkNavMap(Map):
         sanitized_map_type = map_type.replace(" ", "_").replace("/", "_")
         plt.savefig(self.save_path+f'/{sanitized_map_type}_{self.id}_test_00{self.step}.png')
         return encode_image_from_pil(plot_img)
+    
     def plot(
         self,
-        map_type
+        map_type,
+        query_engine=None,
+        current_pos=None
     ):
-        
         import numpy as np
-        self.step += 1
         # 颜色配置（RGBA格式）
         layer_colors = {
             'current view area': (0.5, 0, 0.5, 0.3),   # 紫色
@@ -247,19 +287,17 @@ class LandmarkNavMap(Map):
         fig, ax = plt.subplots(figsize=(10, 10))
         fig = plt.figure(figsize=(10, 10), facecolor='white')
         ax = fig.add_subplot(111)
-
-        # 绘制基础图层
-
-        self._merge_color_layers(ax, map_type)
-        # 添加地标标注
-        if map_type != 'w/o annotation':
-            self._annotate_landmarks(ax)
-        
-        # 合并颜色层（含灰度地标）
-        if map_type != 'w/o semantic map':
+        # 绘制当前视野区域
+        if map_type != 'landmark':
             for idx, (layer_name, rgba) in enumerate(layer_colors.items()):
                 self._draw_layer(ax, map_layers[idx], rgba)
         
+        # 绘制landmark和semantic图层
+        self._merge_color_layers(ax, map_type)
+        # 添加landmark标注
+        if map_type != 'w/o annotation':
+            self._annotate_landmarks(ax)
+            
         # === 新增轨迹绘制逻辑 ===
         # 绘制方向箭头
         if map_type != 'w/o annotation':
@@ -287,7 +325,7 @@ class LandmarkNavMap(Map):
                 
                 # 绘制轨迹线
                 x_coords, y_coords = zip(*trajectory_points)
-                ax.plot(x_coords, y_coords, color = 'black', linestyle='--', linewidth=2.5, alpha=0.7)  # 白色虚线轨迹
+                ax.plot(x_coords, y_coords, color = 'black', linestyle='-', linewidth=3.5, alpha=0.7)  # 白色虚线轨迹
 
                 prev_pose = trajectory_points[-2]
                 pose = trajectory_points[-1]
@@ -311,7 +349,8 @@ class LandmarkNavMap(Map):
                     alpha=0.4)  # 半透明箭头
             
         # 创建图例
-        if map_type != 'w/o semantic map':
+        if map_type != 'landmark':
+            self._annotate_objects(ax, query_engine=query_engine, current_pos=current_pos)
             legend_elements = self._create_legend_elements()
             ax.legend(handles=legend_elements, 
                     loc='upper center',
@@ -323,7 +362,29 @@ class LandmarkNavMap(Map):
         plt.close('all')
         
         return plot_img
-    
+    def get_semantic_map(self):
+        """生成融合target和surroundings的语义地图"""
+        # 初始化空白画布（RGB格式）
+        sem_map = np.zeros((*self.shape, 3), dtype=np.uint8)
+        
+        # 叠加surroundings层（洋红色）
+        if self.surroundings_map.color_array is not None:
+            surroundings_layer = self.surroundings_map.color_array[..., :3].copy().astype(np.uint8)
+            sem_map = np.maximum(sem_map, surroundings_layer)  # 直接取最大值，避免颜色重叠
+        
+        # 叠加target层（青色）
+        if self.target_map.color_array is not None:
+            target_layer = self.target_map.color_array[..., :3].copy().astype(np.uint8)
+            sem_map = np.maximum(sem_map, target_layer)  # 直接取最大值，避免颜色重叠
+        
+        return sem_map
+
+    def _blend_layers(self, base, layer):
+        """图层混合算法（Alpha混合）"""
+        alpha = layer[..., 3:]
+        blended = base * (1 - alpha) + layer * alpha
+        blended[..., 3] = np.minimum(base[..., 3] + layer[..., 3], 1.0)
+        return blended
     def vanilla_plot(
         self,
         goal_description: str,
@@ -557,198 +618,6 @@ class LandmarkNavMap(Map):
         plt.close(fig)
 
         return base64_string
-    def pixel_knowledge(self, target_description: str, task_prior_knowledge: dict, rationale: str):
-        #'vanilla', 'spatial_rationale', 'ours'
-        # 
-        if rationale == 'vanilla':
-            Easy_prompt = f"""Role: You are a High-Level Decision-Making Agent for drone navigation.Your task is to analyze multi-modal inputs (visual map + textual knowledge) to determine whether to explore unknown areas or focus on target localization. Task: {target_description}"""+ """
-    ---
-    **Visual Context (Map)**  
-    - Grid System: Columns (A-Z), Rows (1-N). Current drone position marked with orientation arrow.  
-    - Map Layers:  
-        - Landmarks: Predefined static objects with labels  
-        - Explored Area: Regions already scanned (green overlay)  
-        - Current View: Drone's visible area (blue overlay)  
-        - Suspected Targets: Detected objects matching target description (cyan regions)  
-        - Surrounding Objects: Other detected objects (magenta regions)  
-
-    **Required Output Format**  
-    ```json
-    {
-    "decision": "Explore|Locate",
-    "selected_aoi": "GridID (e.g., C3)",
-    "navigation_instruction": "Move [direction] for [X] grids"
-    }"""
-            return Easy_prompt
-        elif rationale == 'space_rationale':
-            N = 9
-            prompt = f"""Role: You are a High-Level Decision-Making Agent for drone navigation. 
-    Your task is to analyze multi-modal inputs (visual map + textual knowledge) to determine whether to explore unknown areas or focus on target localization.
-
-    --- 
-
-    **Contextual Inputs**  
-    1. **Mission Objective**  
-    - Target: {task_prior_knowledge['Target']}  
-    - Key Spatial Constraints:  
-        - Landmark Relationships: "{task_prior_knowledge['Relationships with Landmarks']}"  
-        - Surroundings: "{task_prior_knowledge['Surrounding']}"  
-        - Surroundings-Target Spatial Context: "{task_prior_knowledge['Spatial_Relationships with objects']}"  
-
-    2. **Operational History**  
-    - Recent Actions: {', '.join(self.history_actions)}  
-    - Previously Selected AOIs: {', '.join(self.history_AOI)}  
-
-    3. **Visual Context (Map)**  
-    - Grid System: Columns (A-Z), Rows (1-N). Current drone position marked with orientation arrow.  
-    - Map Layers:  
-        - Landmarks: Predefined static objects with labels  
-        - Explored Area: Regions already scanned (green overlay)  
-        - Current View: Drone's visible area (blue overlay)  
-        - Suspected Targets: Detected objects matching target description (cyan regions)  
-        - Surrounding Objects: Other detected objects (magenta regions)  
-
-    ---
-
-    **Decision-Making Protocol**  
-    Analyze the following aspects in sequence:  
-
-    1. **Spatial Reasoning**  
-    - Compare target's expected location (from Prior Knowledge) against suspected target positions on the map.  
-    - Calculate grid-based distance between drone's current position and potential target AOIs.  
-
-    2. **Exploration-Localization Tradeoff**  
-    - IF (Uncertainty > 60%) OR (No high-confidence target detected in viewed areas):  
-        → Prioritize exploring unknown grids adjacent to landmark-related AOIs.  
-    - ELSE IF (Target-like objects found in grids matching prior knowledge):  
-        → Focus on localizing within {N} grids around suspected AOI.  
-
-    3. **AOI Selection Criteria**  
-    - Prefer grids that:  
-        a) Align with landmark relationships (e.g., "north of Church")  
-        b) Maximize coverage of unexplored areas  
-        c) Minimize backtracking (avoid revisiting >2 times)  
-    """ + """
-    ---
-
-    **Required Output Format**  
-    ```json
-    {
-    "decision": "Explore|Locate",
-    "selected_aoi": "GridID (e.g., C3)",
-    "rationale": {
-        "spatial_consistency": "Score 1-5 (How well AOI matches prior knowledge)",
-        "exploration_priority": "Score 1-5 (Urgency to scan new areas)",
-        "confidence": "0-100% likelihood of correct decision"
-    },
-    "navigation_instruction": "Move [direction] for [X] grids towards [landmark]"
-    }"""
-            return prompt
-        elif rationale == 'ours':
-            N = 9
-            prompt = f"""Role: You are a High-Level Decision-Making Agent for drone navigation. 
-    Your task is to analyze multi-modal inputs (visual map + textual knowledge) to determine whether to explore unknown areas or focus on target localization.
-
-    --- 
-
-    **Contextual Inputs**  
-    1. **Mission**  
-    - Task: {target_description}
-
-    2. **Operational History**  
-    - Recent Actions: {', '.join(self.history_actions)}  
-    - Previously Selected AOIs: {', '.join(self.history_AOI)}  
-
-    3. **Visual Context (Map)**  
-    - Grid System: Columns (A-Z), Rows (1-N). Current drone position marked with orientation arrow.  
-    - Map Layers:  
-        - Current Pose: Drone's current position and orientation (orange arrow)  
-        - Start Pose: Drone's start position location (yellow arrow)
-        - Landmarks: Predefined static objects with labels  
-        - Explored Area: Regions already scanned (green overlay)  
-        - Current View: Drone's visible area (blue overlay)  
-        - Suspected Targets: Detected objects matching target description (cyan regions)  
-        - Surrounding Objects: Other detected objects (magenta regions)  
-
-    ---
-    **Decision-Making Protocol**
-    Analyze the following aspects in sequence:
-
-    1. **Spatial Reasoning**  
-    - Please use your own direction of the arrow as a reference and convert the direction descriptions ("turn left" or "left side") into the left and right areas corresponding grid coordinates (such as "the street on the right side of the arrow").
-    - Compare target's expected location (from Prior Knowledge description) against suspected target positions on the map, for example, "off the Church" means target is near the grid of "the Church".
-
-    2. **Exploration-Localization Tradeoff**  
-    - IF (Uncertainty > 60%) OR (No high-confidence target detected in viewed areas):  
-        → Prioritize exploring unknown grids adjacent to landmark-related AOIs.  
-    - ELSE IF (Target-like objects found in grids matching prior knowledge):  
-        → Focus on localizing within {N} grids around suspected AOI.  
-
-    3. **AOI Selection Criteria**  
-    - Prefer grids that:  
-        a) Align with landmark relationships (e.g., "north of Church")  
-        b) Maximize coverage of unexplored areas  
-        c) Minimize backtracking (avoid revisiting >2 times)  
-    
-    4. **Notice
-    - Do not confuse the starting point with the current position of the drone.
-    - Do not output the starting point Grid ID, which may be confused with the Area of Interest's Grid ID.
-    
-    """+ """
-    ---
-
-    **Required Output Format**  
-    Thought: [Put your thinking process there. You should think about the location of the target object or the region where it is located. This can be
-achieved by reasonably imagining the unseen areas
-based on the room layout]
-    Answer:
-    ```json
-    {
-    "decision": "Explore|Locate",
-    "selected_aoi": "GridID (e.g., C3)", # only output one grid ID here
-    "rationale": {
-        "spatial_consistency": "Score 1-5 (How well AOI matches prior knowledge)",
-        "exploration_priority": "Score 1-5 (Urgency to scan new areas)",
-        "confidence": "0-100% likelihood of correct decision"
-    },
-    "navigation_instruction": "Move [direction] for [X] grids towards [landmark]"
-    }"""
-            return prompt
-
-    def generate_aoi(self, prompt, image_64):
-        
-        client = OpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            base_url=os.environ.get("OPENAI_BASE_URL"),
-        )
-        response = client.chat.completions.create(
-                model="qwen-vl-plus-latest",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                # 需要注意，传入BASE64，图像格式（即image/{format}）需要与支持的图片列表中的Content Type保持一致。"f"是字符串格式化的方法。
-                                # PNG图像：  f"data:image/png;base64,{base64_image}"
-                                # JPEG图像： f"data:image/jpeg;base64,{base64_image}"
-                                # WEBP图像： f"data:image/webp;base64,{base64_image}"
-                                "image_url": {"url": f"data:image/png;base64,{image_64}"}, 
-                            },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-            )
-        answer = self.extract_json_from_msg(response.choices[0].message.content)
-
-        # 假如文件有内容,接着将response中的内容保存到f'results/landmap_{id}_00{self.step}.txt'
-        with open(f'results/finetuned_rationale/landmap_{self.id}_00{self.step}.txt', 'w') as f:
-            f.write(prompt + "\n\n")
-            json.dump(answer, f, ensure_ascii=False, indent=4)
-        self.history_AOI.append(answer["selected_aoi"])
-        self.history_actions.append(answer["decision"])
-        return answer
     
     def extract_json_from_msg(self, msg):
         """

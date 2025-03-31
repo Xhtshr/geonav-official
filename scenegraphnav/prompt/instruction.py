@@ -3,7 +3,22 @@ import json
 from openai import OpenAI
 
 # 构造 Prompt
-def create_prompt(instruction):
+def create_prompt(instruction, landmarks):
+    return """You are a graph generator that converts natural language urban scene descriptions into a structured JSON graph. Your output must represent the scene as a graph with "nodes" and "edges". Each node represents an object, landmark, or scene element, and each edge represents a spatial relationship (i.e., a semantic link) between two nodes.
+Requirements:
+1. Each node must have a unique "id".
+2. Each node may include the following attributes:
+   - "object": the type or description of the object (e.g., "white-roofed house", "tree", "white car", "parking lot").
+   - "bbox": a placeholder for bounding box coordinates in the format [xmin, ymin, xmax, ymax]. (place [] if not available)
+   - "attributes": an object containing additional properties (e.g., "color", "size", "orientation", "roof type", etc.).
+3. Each edge must include:
+   - "source": the id of the source node.
+   - "target": the id of the target node.
+   - "relationship": a description of the spatial or directional relationship (e.g., "in front", "behind", "across", "facing", "along", "near", "in between", "at bottom left").
+Notice: * ignore the landmark names for unnecessary identification, i.e. {}. And don't have to process them as nodes.
+you have some flexibility in defining node properties and relationship descriptions, so that the model can adaptively generate a suitable scene graph based on the instruction. Your output should capture the scene’s underlying graph structure by identifying objects, landmarks, and their spatial relationships.
+Now, based on these patterns, generate a JSON graph for a given scene instruction: {}.
+""".format(landmarks, instruction)
     return """You are a language navigation assistant. Your task is to analyze complex navigation instructions and extract the following structured information in JSON format:
 - Target: The main object or location to be navigated to. And list its attributes such as color, shape, etc.
 - Landmarks: Any referenced Geosptial names that help identify the target's position. Note that landmarks are usually capitalized names of streets, roads, etc. List the relationships between the target and landmarks, and mention the secondary landmarks if the target near the intersection of two landmarks.
@@ -19,9 +34,9 @@ def create_prompt(instruction):
         "attribute 1": "value 1", # optional
         "attribute 2": "value 2",
         ...
-    }}
+    }},
   }},
-  "Relationships with Landmarks": {{
+  "Spatial Relationships": {{
     "intersection": ["Landmark 1", "Landmark 2",...], # return none if no intersection
     "Landmark":{{
         "Landmark 1": "relationship",
@@ -29,7 +44,13 @@ def create_prompt(instruction):
        ... 
     }}
   }},
-  "Surrounding": ["object_class 1", "object_class 2", ...]
+  "Surrounding": {{
+    "class": "class_name", # object class should be typical, e.g. car, building, etc.
+    "attribute":{{
+        "attribute 1": "value 1", # optional
+        "attribute 2": "value 2",
+        ...
+    }}
 }}```
 
 
@@ -89,7 +110,7 @@ def gpt_api_call(prompt):
     response = client.chat.completions.create(
         model="qwen-max-latest",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.0  # 设置为 0.0 以确保解析的稳定性
+        temperature=0.01  # 设置为 0.01 以确保解析的稳定性
     )
     return response.choices[0].message.content
 

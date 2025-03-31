@@ -17,6 +17,7 @@ class ExperimentArgs:
     log: bool
     silent: bool
     resume_log_id: str
+    output_dir: str
 
     # observation
     map_type: str

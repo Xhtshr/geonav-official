@@ -3,7 +3,7 @@ import math
 import networkx as nx
 from collections import defaultdict
 from dataclasses import dataclass
-from rtree import index  # 需要提前安装：pip install rtree
+from rtree import index  # pip install rtree
 
 import sys
 sys.path.append("/data1/XHT/citynav/")
@@ -12,18 +12,13 @@ from gsamllavanav.cityreferobject import CityReferObject
 from shapely.geometry import Point, Polygon
 
 
-# ================== 知识图谱节点 ==================
+# ================== Knowledge Graph ==================
 class KnowledgeNode:
     def __init__(self, node_id, node_type, position, timestamp):
         self.id = node_id
         self.type = node_type
         self.position = position
         self.timestamp = timestamp
-        self.relations = {
-            'spatial': defaultdict(list),
-            'semantic': defaultdict(list),
-            'temporal': defaultdict(list)
-        }
 
 class GeoNode(KnowledgeNode):
     def __init__(self, city_obj: CityReferObject):
@@ -36,19 +31,21 @@ class GeoNode(KnowledgeNode):
         self.name = city_obj.name
         self.object_type = city_obj.object_type
         self.contour_polygon = city_obj.contour_polygon
+        self.child_objects = []  # 子对象ID列表
 
 class ObjectNode(KnowledgeNode):
-    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None):
+    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None, target=False):
         super().__init__(
-            node_id=f"obj_{detection_id}",
+            node_id=detection_id,
             node_type='object',
             position=position,
             timestamp=timestamp
         )
         self.obj_class = obj_class
         self.confidence = confidence
+        self.target = target
 
-# ================== 空间索引与图谱 ==================
+# ================== Spatial Index ==================
 class SpatialIndex:
     def __init__(self):
         self.idx = index.Index()
@@ -72,7 +69,12 @@ class KnowledgeGraph:
     def __init__(self):
         self.spatial_index = SpatialIndex()
         self.nodes = {}
-    
+        self.temp_nodes = {}
+        self.class_counters = defaultdict(int)
+        
+        # NetworkX
+        self.graph_nx = nx.Graph()
+        self.digraph_nx = nx.DiGraph()
     def update_nodes(self, current_timestamp: int, decay_rate=0.1):
         """
         更新节点置信度并清理过期节点
@@ -91,7 +93,7 @@ class KnowledgeGraph:
                 node.confidence *= (1 - decay_rate) ** time_alive
                 
                 # 标记需要移除的节点
-                if node.confidence <= 0.01:  # 设置最小阈值
+                if node.confidence < 0.05:  # 设置最小阈值
                     to_remove.append(node_id)
         
         # 移除低置信度节点
@@ -101,21 +103,60 @@ class KnowledgeGraph:
             self.spatial_index.idx.delete(hashed_id, None)
             del self.spatial_index.nodes[hashed_id]
     
+    def add_edge(self, source_id: str, target_id: str, relation_type: str):
+        if source_id not in self.nodes or target_id not in self.nodes:
+            raise ValueError("Cannot create edge between non-existing nodes")
+        self.graph_nx.add_edge(self.nodes[source_id], self.nodes[target_id], relation_type=relation_type)
+        self.digraph_nx.add_edge(self.nodes[source_id], self.nodes[target_id], relation_type=relation_type)
+
     def add_geo_node(self, city_obj: CityReferObject):
         node = GeoNode(city_obj)
-        self._add_node(node)
+        self._add_node(node, 'geo')
     
-    def add_object_node(self, position, obj_class, confidence, timestamp: int):
-        node_id = f"obj_{len(self.nodes)}"
-        node = ObjectNode(node_id, position, obj_class, confidence, timestamp)
-        self._add_node(node)
-    
-    def _add_node(self, node):
+    def add_object_node(self, position, obj_class, confidence, timestamp: int, target: bool = False):
+        # basic add node
+        parent_geo = self._find_containing_geo(position)
+        current_count = self.class_counters[obj_class]  # 获取当前计数
+        node_id = f"{obj_class}_{current_count}"
+        node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
+        Flag = self._add_node(node, obj_class)
+        if Flag:
+            return Flag
+        # # 重检测(降低节点被记忆的几率）
+        # for key, (temp_node, first_timestamp) in list(self.temp_nodes.items()):
+        #     if temp_node.confidence > 0.5:
+        #         del self.temp_nodes[key]
+        #         current_count = self.class_counters[obj_class]
+        #         node_id = f"{obj_class}_{current_count}"
+        #         node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
+        #         self._add_node(node, obj_class)
+        #         continue
+        #     if temp_node.obj_class == obj_class and self._distance(temp_node.position, position) < 15.0:
+        #         # 第二次检测到：正式添加节点
+        #         del self.temp_nodes[key]
+        #         current_count = self.class_counters[obj_class]
+        #         node_id = f"{obj_class}_{current_count}"
+        #         node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
+        #         self._add_node(node, obj_class)
+        #         return
+
+        # # 第一次检测到：存储到临时节点
+        # position_hash = hash((round(position.x, 1), round(position.y, 1)))
+        # key = (obj_class, position_hash)
+        # node_id = self.class_counters['temp']  # 使用全局计数器
+        # self.class_counters['temp'] += 1
+        # node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
+        # self.temp_nodes[key] = (node, timestamp)
+        return node_id
+    def _add_node(self, node, obj_class):
         # 简单去重策略：相同位置同类型视为同一对象
-        existing = self.spatial_index.query_radius(node.position, 4.0)
+        existing = self.spatial_index.query_radius(node.position, 20.0)
         for n in existing:
-            if n.type == node.type and self._distance(n.position, node.position) < 4.0:
-                return  # 跳过重复对象
+            if n.type == node.type and self._distance(n.position, node.position) < 5.0:
+                return n.id
+        self.graph_nx.add_node(node)
+        self.digraph_nx.add_node(node)
+        self.class_counters[obj_class] += 1
         self.nodes[node.id] = node
         self.spatial_index.insert(node)
     
@@ -144,8 +185,10 @@ class QueryEngine:
             desc['name'] = node.name
             desc['category'] = node.object_type
         elif isinstance(node, ObjectNode):
+            desc['id'] = node.id
             desc['class'] = node.obj_class
             desc['confidence'] = node.confidence
+            desc['target'] = node.target
         return desc
     
     def get_recent_objects(self, current_timestamp: int, time_window: int):
@@ -161,7 +204,7 @@ class QueryEngine:
             if isinstance(node, ObjectNode) and node.timestamp is not None:
                 if threshold <= node.timestamp <= current_timestamp:
                     recent.append({
-                        'id': node.id,
+                        'id': f"{node.id}",
                         'type': node.obj_class,
                         'pos': (node.position.x, node.position.y),
                         'age': current_timestamp - node.timestamp
@@ -189,29 +232,75 @@ class QueryEngine:
         angle = math.degrees(math.atan2(dy, dx)) % 360
         return self.DIRECTION_NAMES[round(angle / 45) % 8]
     
-    def is_within_geo_node(self, position: Point2D):
+    # def is_within_geo_node(self, position: Point2D):
 
+    #     point = Point(position.x, position.y)
+    #     name_list = []
+    #     for node in self.graph.nodes.values():
+    #         if isinstance(node, GeoNode):
+    #             polygon = node.contour_polygon
+    #             if polygon.contains(point):
+    #                 name_list.append(node.name)
+    #     if name_list:
+    #         return f' in {", ".join(name_list)}'
+    #     return f' not in any landmarks. '
+    
+    # # 这里我希望实现输入位置，检索到geo_node的距离和方向，并回复文本答案
+    # def get_geo_node_info(self, position: Point2D):
+    #     answer = ""
+    #     for node in self.graph.nodes.values():
+    #         if isinstance(node, GeoNode):
+    #             distance = self._calc_distance(node.position, position)
+    #             direction = self._get_direction(position, node.position)
+    #             answer += f" The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.\n"
+    #     return answer
+    def get_enhanced_geo_relation(self, position: Point2D) -> str:
+        """增强版地理关系描述：综合包含性、边界角和距离信息"""
         point = Point(position.x, position.y)
-        name_list = []
+        descriptions = []
+        
         for node in self.graph.nodes.values():
-            if isinstance(node, GeoNode):
-                polygon = node.contour_polygon
-                if polygon.contains(point):
-                    name_list.append(node.name)
-        if name_list:
-            return f' in {", ".join(name_list)}'
-        return f' not in any landmarks. '
-    
-    # 这里我希望实现输入位置，检索到geo_node的距离和方向，并回复文本答案
-    def get_geo_node_info(self, position: Point2D):
-        answer = ""
-        for node in self.graph.nodes.values():
-            if isinstance(node, GeoNode):
-                distance = self._calc_distance(node.position, position)
-                direction = self._get_direction(position, node.position)
-                answer += f" The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.\n"
-        return answer
-    
+            if not isinstance(node, GeoNode):
+                continue
+                
+            # 基础信息计算
+            distance = self._calc_distance(node.position, position)
+            direction = self._get_direction(position, node.position)
+            polygon = node.contour_polygon
+            
+            # 情形1：在轮廓多边形内部
+            if polygon.contains(point):
+                # 计算相对于多边形中心的方位
+                centroid = polygon.centroid
+                intra_direction = self._get_direction(
+                    Point2D(centroid.x, centroid.y), 
+                    position
+                )
+                descriptions.append(f"inside {node.name} ({intra_direction} area)")
+                continue
+                
+            # 情形2：接近多边形顶点（角落检测）
+            closest_corner, min_corner_dist = None, float('inf')
+            for coord in polygon.exterior.coords[:-1]:  # 排除重复的闭合点
+                corner_dist = math.hypot(position.x-coord[0], position.y-coord[1])
+                if corner_dist < min_corner_dist:
+                    min_corner_dist = corner_dist
+                    closest_corner = Point2D(coord[0], coord[1])
+                    
+            if min_corner_dist < 5.0:  # 5米内视为接近角落
+                corner_dir = self._get_direction(position, closest_corner)
+                descriptions.append(
+                    f"near {node.name}'s {corner_dir} corner "
+                    f"({min_corner_dist:.1f}m)")
+                continue
+                
+            # 情形3：外部普通方位
+            descriptions.append(
+                f"{distance:.1f}m {direction} of {node.name}")
+        
+        if not descriptions:
+            return "No nearby landmarks detected"
+        return " | ".join(sorted(descriptions, key=lambda x: len(x)))
 
 
 def visualize_knowledge_graph(graph, current_pos):
@@ -274,7 +363,7 @@ if __name__ == "__main__":
     query_engine = QueryEngine(graph)
     current_pos = Point2D(380.0, 449.0)
     context = query_engine.get_context(current_pos, radius=15.0)
-    contain = query_engine.is_within_geo_node(current_pos) + query_engine.get_geo_node_info(current_pos)
+    contain = query_engine.get_enhanced_geo_relation(current_pos)
 
 
     # 打印查询结果

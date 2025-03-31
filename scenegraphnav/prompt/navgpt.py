@@ -3,7 +3,7 @@ Target Instruction: {instruction} Analyze the instruction to identify key landma
 While navigating, your current relationship with landmark is: You are {geoinstruct}.
 Important: Use the instruction and your observations to plan step by step.
 """
-TASK_DESCRIPTION_SHORT ="""You are an intelligent agent controlling a UAV to make zero-shot visual-object navigation in a city environment. Following the text instruction, your goal is to explore and reach the described target based on the topdown RGB images.
+TASK_DESCRIPTION_SHORT ="""You are an intelligent agent controlling a UAV to make zero-shot visual-object navigation in a city environment. Following the text instruction, your goal is to Locate the described target based on the topdown RGB images.
 Target Instruction: {instruction}"""
 
 OBSERVATION_CAPTION = """Image shows an aerial view of the urban area with many objects. detect all the objects in the image, return bounding boxes for all of them using the following format: [{
@@ -76,7 +76,7 @@ You can choose two decision: Explore or Exploit. If u have not find the target, 
 <thought>
 
 <answer>
-You response should consist three types of content: **decision**, **reason**, and **navigation_recommendation**.
+You answer should consist three types of content: **decision**, **reason**, and **navigation_recommendation**.
 **Required Output Format**  
     ```json
     {{
@@ -90,6 +90,41 @@ You response should consist three types of content: **decision**, **reason**, an
 
 #利用原生的记忆能力
 HISTORY_PROMPT = """{landmark}. {recent_objects}. {surroundings}."""
+
+PLANNER_PROMPTV2 = """ 
+You are a planner for a UAV navigation system to locate a target. The target description is {instruction}. You are {geoinstruct}. Answer the following questions:
+<question>
+The strategy list to achieve the subgoal is ['Navigate', 'Search', 'Locate']. If you are close to the landmark, you should move to search the area according to the described spatial relationship. If you are not close to the landmark, you should navigate near the landmark.
+Please decompose task into detailed subgoals and output the result in a structured JSON format.
+<question>
+
+<thought>
+\put your thoughts here
+<thought>
+
+<answer>
+Your answer should be in json format ,consist three types of content: **thought**, **reason**, and **movement**.
+**Required Output Format**
+```json
+{{
+  "plan": "<Overall plan description, explaining the overall task goal and key steps>",
+  "sub_goals": [
+    {{
+      "goal": "<Description of sub-goal 1>",
+      "desired_state": "<Expected state after achieving sub-goal 1>",
+      "strategy": "<The strategy employed to achieve sub-goal 1>"# choose from "Navigate", "Search", "Locate"
+    }},
+    {{
+      "goal": "<Description of sub-goal 2>",
+      "desired_state": "<Expected state after achieving sub-goal 2>",
+      "strategy": "<The strategy employed to achieve sub-goal 2>"
+    }},
+    ... // Additional sub-goals can be added as needed based on the task.
+  ]
+}}```
+<answer>
+
+"""
 
 PLANNER_PROMPT = """ You are a planner for a UAV navigation system to locate a target. Given a task, you can choose two decision: Navigate or Search. First, you should navigate near the landmark. Then, you should search the area according to the described spatial relationship.
 To achieve this goal, you can use the map.

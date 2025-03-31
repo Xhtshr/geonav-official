@@ -17,9 +17,10 @@ class ExperimentArgs:
     log: bool
     silent: bool
     resume_log_id: str
-
+    
     # observation
     map_size: int
+    output_dir: str # newly added
     map_meters: float
     map_update_interval: int
     max_depth: float
@@ -99,6 +100,7 @@ def parse_args():
     parser.add_argument('--resume_log_id', type=str, default='')
 
     # observation
+    parser.add_argument('--output_dir', type=str, default='results/geonav')
     parser.add_argument('--map_size', type=int, default=240)
     parser.add_argument('--map_meters', type=float, default=410.)
     parser.add_argument('--map_update_interval', type=int, default=5)
@@ -106,6 +108,7 @@ def parse_args():
     parser.add_argument('--altitude', type=float, default=50)
     parser.add_argument('--ablate', type=str, choices=['rgb', 'depth', 'tracking', 'landmark', 'gsam', ''], default='')
     parser.add_argument('--alt_env', type=str, choices=['', 'flood', 'ground_fissure'], default='')
+
 
     # gsam
     parser.add_argument('--gsam_rgb_shape', type=int, default=500)
