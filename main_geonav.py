@@ -50,7 +50,7 @@ if args.mode == 'eval':
     
     def initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key):
         if VLM_backbone == 'Qwen-local':
-            # 尝试使用72B的本地模型
+            # 尝试使用32B的本地模型
             from transformers import Qwen2VLForConditionalGeneration
             vlmodel = Qwen2VLForConditionalGeneration.from_pretrained(
                 "/data1/FoundationModels/Qwen",

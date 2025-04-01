@@ -1,18 +1,19 @@
 from openai import OpenAI
 from json import dumps as json_dumps  # 添加在文件顶部
 from scenegraphnav.parser import parse_args
-from gsamllavanav.parser import ExperimentArgs
 
+from shapely.geometry import Point
+from gsamllavanav.parser import ExperimentArgs
 from gsamllavanav.mapdata import MAP_BOUNDS
 from gsamllavanav.space import Point2D, Pose4D
 from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from gsamllavanav.teacher.trajectory import _moved_pose
 from gsamllavanav.observation import cropclient
-from scenegraphnav.city_scene_graph import KnowledgeGraph, QueryEngine, visualize_knowledge_graph
+from scenegraphnav.city_scene_graph import GeoNode, ObjectNode, KnowledgeGraph, QueryEngine, visualize_knowledge_graph
 from gsamllavanav.dataset.episode import Episode
 
 import os
-import json
+import json, math
 import numpy as np
 
 class LLMController:
@@ -142,10 +143,28 @@ Now, the answer is:
         
         # pos, class, confidence, timestamp
         poses = gsm.bbox_to_global_pos(bboxes)
-        for pos, node in zip(poses,subgraph["nodes"]):
+        for pos, node in zip(poses, subgraph["nodes"]):
             global_id = self.scene_graph.add_object_node(pos, node['object'], confidence=1.0, timestamp=self.timestep)
             if global_id is not None:
                 id_mapping[node['id']] = global_id
+
+                parent_geo = self._find_parent_geo(pos)
+                if parent_geo:
+                    self.scene_graph.add_edge(
+                    parent_geo.id, 
+                    global_id, 
+                    "contains"
+                )
+                    spatial_rel = self._describe_spatial_relation(
+                        parent_geo, 
+                        self.scene_graph.nodes[global_id]
+                    )
+                    self.scene_graph.add_edge(
+                        parent_geo.id,
+                        global_id,
+                        spatial_rel
+                    )
+
 
         for edge in subgraph["edges"]:
             source = id_mapping.get(edge["source"])
@@ -154,7 +173,7 @@ Now, the answer is:
                 continue
             relationship = edge["relationship"]
             self.scene_graph.add_edge(source, target, relationship)
-        self.query_engine = QueryEngine(self.scene_graph)
+        self.query_engine = QueryEngine(self.scene_graph) # 用于查询场景图
         
     def build_scene_nodes(self, targets, surroundings, show=True, time_window=3):
         for object in targets:
@@ -186,3 +205,36 @@ Now, the answer is:
         response = gpt_api_call(prompt)
         self.intr_knowledge = extract_json_from_msg(response)
         return self.intr_knowledge
+    
+    def _find_parent_geo(self, position: Point2D):
+        """查找包含当前坐标的地理父节点"""
+        for node in self.scene_graph.nodes.values():
+            if isinstance(node, GeoNode):
+                # 使用shapely进行空间包含判断
+                point = Point(position.x, position.y)
+                if node.contour_polygon.contains(point):
+                    return node
+        return None
+    
+    def _describe_spatial_relation(self, parent: GeoNode, child: ObjectNode):
+        """生成更细致的自然语言描述的空间关系"""
+        dx = child.position.x - parent.position.x
+        dy = child.position.y - parent.position.y
+        angle = (math.degrees(math.atan2(dy, dx)) + 360) % 360  # 确保角度为正值
+        
+        relations = {
+            (337.5, 22.5): "directly in front of",
+            (22.5, 67.5): "to the top right of",
+            (67.5, 112.5): "to the right of",
+            (112.5, 157.5): "to the bottom right of",
+            (157.5, 202.5): "directly behind",
+            (202.5, 247.5): "to the bottom left of",
+            (247.5, 292.5): "to the left of",
+            (292.5, 337.5): "to the top left of"
+        }
+        
+        for (start, end), desc in relations.items():
+            if start <= angle < end:
+                return desc
+        return "near"
+    

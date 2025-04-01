@@ -74,3 +74,26 @@ Your answer should include two components: **reason** and **selected_pos**. [x, 
         "selected_pos": [x, y] 
     }}```
 <answer>"""
+
+QUERY_OPERATION_CHAIN_PROMPT  = f"""
+    Converts navigation commands into a chain of query operations. Available operations:
+    - get_geonode_by_name(name_pattern)
+    - get_child_nodes(parent, relation_type)
+    - filter_by_class(obj_class)
+    - sort_by_corner(parent, corner)
+
+    Example instruction: "The gray car in the bottom left of parking lot at NT Wholesale"
+    return operation chain:
+    [
+        {{"method": "get_geonode_by_name", "args": ["NT Wholesale"]}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
+        {{"method": "filter_by_class", "args": ["parking_lot"]}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
+        {{"method": "filter_by_class", "args": ["car"]}},
+        {{"method": "filter_by_attribute", "kwargs": {{"color": "gray"}}}},
+        {{"method": "sort_by_corner", "args": ["bottom-left"]}}
+    ]
+
+    Current instruction: {instruction}
+    Please output the chain of operations in JSON format:
+    """

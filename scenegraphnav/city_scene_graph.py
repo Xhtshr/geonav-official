@@ -106,16 +106,15 @@ class KnowledgeGraph:
     def add_edge(self, source_id: str, target_id: str, relation_type: str):
         if source_id not in self.nodes or target_id not in self.nodes:
             raise ValueError("Cannot create edge between non-existing nodes")
-        self.graph_nx.add_edge(self.nodes[source_id], self.nodes[target_id], relation_type=relation_type)
-        self.digraph_nx.add_edge(self.nodes[source_id], self.nodes[target_id], relation_type=relation_type)
+        self.graph_nx.add_edge(source_id, target_id, relation_type=relation_type)
+        self.digraph_nx.add_edge(source_id, target_id, relation_type=relation_type)
 
     def add_geo_node(self, city_obj: CityReferObject):
         node = GeoNode(city_obj)
         self._add_node(node, 'geo')
     
     def add_object_node(self, position, obj_class, confidence, timestamp: int, target: bool = False):
-        # basic add node
-        parent_geo = self._find_containing_geo(position)
+        # basic add node        
         current_count = self.class_counters[obj_class]  # 获取当前计数
         node_id = f"{obj_class}_{current_count}"
         node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
@@ -154,8 +153,8 @@ class KnowledgeGraph:
         for n in existing:
             if n.type == node.type and self._distance(n.position, node.position) < 5.0:
                 return n.id
-        self.graph_nx.add_node(node)
-        self.digraph_nx.add_node(node)
+        self.graph_nx.add_node(node.id)
+        self.digraph_nx.add_node(node.id)
         self.class_counters[obj_class] += 1
         self.nodes[node.id] = node
         self.spatial_index.insert(node)
@@ -191,6 +190,7 @@ class QueryEngine:
             desc['target'] = node.target
         return desc
     
+# ===============dummy 查询 ==================
     def get_recent_objects(self, current_timestamp: int, time_window: int):
         """获取指定时间窗口内的动态物体信息
         Args:
@@ -221,6 +221,39 @@ class QueryEngine:
             )
         
         return '\n'.join(desc)
+    
+# ================== 查询原子操作 ==================
+    def subgraph_query(self, operation_chain: list):
+        """链式查询框架"""
+        current_nodes = None
+        for op in operation_chain:
+            func = getattr(self, op['method'])
+            current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), 
+                                candidates=current_nodes)
+            if not current_nodes:
+                break
+        return current_nodes
+    def get_geonode_by_name(self, name_pattern: str, candidates=None):
+        """名称匹配地理节点"""
+        nodes = candidates if candidates else self.graph.nodes.values()
+        return [n for n in nodes if isinstance(n, GeoNode) 
+               and name_pattern.lower() in n.name.lower()]
+    def get_child_nodes(self, parent_node, relation_type: str, 
+                       candidates=None):
+        """获取指定关系的子节点"""
+        children = []
+        for edge in self.graph.digraph_nx.out_edges(parent_node.id, data=True):
+            if edge[2]['relation_type'] == relation_type:
+                child = self.graph.nodes[edge[1]]
+                if not candidates or child in candidates:
+                    children.append(child)
+        return children
+    def filter_by_class(self, obj_class: str, candidates):
+        """按类别过滤物体节点""" 
+        return [n for n in candidates if isinstance(n, ObjectNode) 
+               and n.obj_class == obj_class]
+    def filter_by_attribute(self, key: str, value: str, candidates):
+        return [n for n in candidates if n.attributes.get(key) == value]
 
     @staticmethod
     def _calc_distance(p1: Point2D, p2: Point2D):
@@ -302,39 +335,6 @@ class QueryEngine:
             return "No nearby landmarks detected"
         return " | ".join(sorted(descriptions, key=lambda x: len(x)))
 
-
-def visualize_knowledge_graph(graph, current_pos):
-    import matplotlib.pyplot as plt
-
-    # 可视化物体图谱
-    fig, ax = plt.subplots()
-    ax.set_title("Knowledge Graph Visualization")
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-
-    # 绘制地理节点
-    for node in graph.nodes.values():
-        if isinstance(node, GeoNode):
-            ax.plot(node.position.x, node.position.y, 'bo', label='GeoNode')
-            ax.text(node.position.x, node.position.y, node.name, fontsize=9, ha='right')
-
-    # 绘制物体节点
-    for node in graph.nodes.values():
-        if isinstance(node, ObjectNode):
-            ax.plot(node.position.x, node.position.y, 'ro', label='ObjectNode')
-            ax.text(node.position.x, node.position.y, node.obj_class, fontsize=9, ha='right')
-
-    # 绘制当前查询位置
-    ax.plot(current_pos.x, current_pos.y, 'go', label='Current Position')
-    ax.text(current_pos.x, current_pos.y, 'Current Position', fontsize=9, ha='right')
-
-    # 设置图例
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax.legend(by_label.values(), by_label.keys())
-
-    plt.show()
-
     # 示例用法
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
@@ -373,6 +373,3 @@ if __name__ == "__main__":
     for item in context:
         print(f"- {item['type'].upper()}: {item.get('name','')}{item.get('class','')}"
                 f" {item['distance']} {item['direction']} direction")
-
-    # 可视化知识图谱
-    visualize_knowledge_graph(graph, current_pos)

@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 
-from ggb.QwenAPI import encode_image_from_pil
+from utils.QwenAPI import encode_image_from_pil
 from gsamllavanav.observation import cropclient
 from gsamllavanav.defaultpaths import GSAM_MAPS_DIR
 from gsamllavanav.space import Point2D, Pose4D

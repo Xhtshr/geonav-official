@@ -22,5 +22,5 @@ _notebooks
 *.png
 *.jpg
 
-ggb/test_unseen
-ggb/val_seen
+utils/test_unseen
+utils/val_seen

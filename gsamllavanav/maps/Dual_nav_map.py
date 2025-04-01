@@ -289,7 +289,7 @@ class GeoNavMap(Map):
         plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
         plot_img = plot_img.resize((224,224))
         plt.savefig(f'results/finetuned_rationale/landmap_{self.id}_test_00{self.step}.png')
-        from ggb.QwenAPI import encode_image_from_pil
+        from utils.QwenAPI import encode_image_from_pil
         rgb = Image.open(f'results/finetuned_rationale/landmap_{self.id}_test_00{self.step}.png')
         # 示例用法
         base64_string = encode_image_from_pil(rgb)

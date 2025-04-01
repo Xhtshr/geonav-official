@@ -12,7 +12,7 @@ from scenegraphnav.evaluate import move
 
 
 from openai import OpenAI
-from ggb.QwenAPI import encode_image_from_pil
+from utils.QwenAPI import encode_image_from_pil
 from PIL import Image
 
 from scenegraphnav.prompt.navgpt import *
@@ -669,7 +669,7 @@ class SceneAgent(Agent):
             os.environ["OPENAI_API_KEY"] = "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020" # 3.5--1美元
             # 设置 OPENAI_BASE_URL 环境变量
             os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus/v1"
-            from ggb.entity_extra import gpt_api_call
+            from utils.entity_extra import gpt_api_call
             history_prompt = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action = self.previous_action)
             self.history = gpt_api_call(prompt=history_prompt)
             
