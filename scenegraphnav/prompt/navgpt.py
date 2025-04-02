@@ -89,7 +89,7 @@ You answer should consist three types of content: **decision**, **reason**, and 
 """
 
 #利用原生的记忆能力
-HISTORY_PROMPT = """{landmark}. {recent_objects}. {surroundings}."""
+HISTORY_PROMPT = """{landmark}. """
 
 PLANNER_PROMPTV2 = """ 
 You are a planner for a UAV navigation system to locate a target. The target description is {instruction}. You are {geoinstruct}. Answer the following questions:

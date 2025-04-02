@@ -5,19 +5,6 @@ from openai import OpenAI
 # extract spatial relation like 'left of', 'right of', ''
 SPATIAL_RELATION_PROMPT = ''
 
-#导入openai key配置
-os.environ["OPENAI_API_KEY"] = "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020" # 3.5--1美元
-# os.environ["OPENAI_API_KEY"] = "sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2" # 4o--71美元
-# 设置 OPENAI_BASE_URL 环境变量
-os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus/v1"
-# 设置longchain的基础环境变量
-os.environ["OPENAI_API_BASE"] = 'https://xiaoai.plus/v1'
-client = OpenAI(
-    # 下面两个参数的默认值来自环境变量，可以不加
-    api_key=os.environ.get("OPENAI_API_KEY"),
-    base_url=os.environ.get("OPENAI_BASE_URL"),
-)
-
 # 构造 Prompt
 def create_prompt(instruction):
     return f"""

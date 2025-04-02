@@ -34,7 +34,7 @@ class GeoNode(KnowledgeNode):
         self.child_objects = []  # 子对象ID列表
 
 class ObjectNode(KnowledgeNode):
-    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None, target=False):
+    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None, target=False, **attributes):
         super().__init__(
             node_id=detection_id,
             node_type='object',
@@ -44,7 +44,9 @@ class ObjectNode(KnowledgeNode):
         self.obj_class = obj_class
         self.confidence = confidence
         self.target = target
-
+        # 存储其他属性
+        for key, value in attributes.items():
+            setattr(self, key, value)
 # ================== Spatial Index ==================
 class SpatialIndex:
     def __init__(self):
@@ -113,11 +115,11 @@ class KnowledgeGraph:
         node = GeoNode(city_obj)
         self._add_node(node, 'geo')
     
-    def add_object_node(self, position, obj_class, confidence, timestamp: int, target: bool = False):
+    def add_object_node(self, position, obj_class, confidence, timestamp: int, target: bool = False, **attributes):
         # basic add node        
         current_count = self.class_counters[obj_class]  # 获取当前计数
         node_id = f"{obj_class}_{current_count}"
-        node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
+        node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target, **attributes)
         Flag = self._add_node(node, obj_class)
         if Flag:
             return Flag
@@ -228,15 +230,25 @@ class QueryEngine:
         current_nodes = None
         for op in operation_chain:
             func = getattr(self, op['method'])
-            current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), 
-                                candidates=current_nodes)
+            if op.get('kwargs', {}) == {}:
+                continue
+            # 检查是否需要 parent_node 参数
+            if op['method'] == 'get_child_nodes':
+                if current_nodes is None or len(current_nodes) == 0:
+                    continue
+                # 假设使用第一个节点作为 parent_node
+                parent_node = current_nodes[0]
+                current_nodes = func(parent_node, **op.get('kwargs', {}), candidates=current_nodes)
+            else:
+                current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
+            
             if not current_nodes:
                 break
         return current_nodes
     def get_geonode_by_name(self, name_pattern: str, candidates=None):
         """名称匹配地理节点"""
         nodes = candidates if candidates else self.graph.nodes.values()
-        return [n for n in nodes if isinstance(n, GeoNode) 
+        return [n for n in nodes if isinstance(n, GeoNode)
                and name_pattern.lower() in n.name.lower()]
     def get_child_nodes(self, parent_node, relation_type: str, 
                        candidates=None):
@@ -251,9 +263,11 @@ class QueryEngine:
     def filter_by_class(self, obj_class: str, candidates):
         """按类别过滤物体节点""" 
         return [n for n in candidates if isinstance(n, ObjectNode) 
-               and n.obj_class == obj_class]
+               and obj_class in n.obj_class]
     def filter_by_attribute(self, key: str, value: str, candidates):
-        return [n for n in candidates if n.attributes.get(key) == value]
+        """按属性过滤物体节点"""
+        return [n for n in candidates if isinstance(n, ObjectNode) 
+               and getattr(n, key, None) == value]  # 确保属性存在并匹配
 
     @staticmethod
     def _calc_distance(p1: Point2D, p2: Point2D):
@@ -264,29 +278,19 @@ class QueryEngine:
         dy = target.y - src.y
         angle = math.degrees(math.atan2(dy, dx)) % 360
         return self.DIRECTION_NAMES[round(angle / 45) % 8]
-    
-    # def is_within_geo_node(self, position: Point2D):
+    def is_within_geo_node(self, position: Point2D):
 
-    #     point = Point(position.x, position.y)
-    #     name_list = []
-    #     for node in self.graph.nodes.values():
-    #         if isinstance(node, GeoNode):
-    #             polygon = node.contour_polygon
-    #             if polygon.contains(point):
-    #                 name_list.append(node.name)
-    #     if name_list:
-    #         return f' in {", ".join(name_list)}'
-    #     return f' not in any landmarks. '
-    
-    # # 这里我希望实现输入位置，检索到geo_node的距离和方向，并回复文本答案
-    # def get_geo_node_info(self, position: Point2D):
-    #     answer = ""
-    #     for node in self.graph.nodes.values():
-    #         if isinstance(node, GeoNode):
-    #             distance = self._calc_distance(node.position, position)
-    #             direction = self._get_direction(position, node.position)
-    #             answer += f" The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.\n"
-    #     return answer
+        point = Point(position.x, position.y)
+        name_list = []
+        for node in self.graph.nodes.values():
+            if isinstance(node, GeoNode):
+                polygon = node.contour_polygon
+                if polygon.contains(point):
+                    name_list.append(node.name)
+        if name_list:
+            return f' in {", ".join(name_list)}'
+        return f' not in any landmarks. '
+
     def get_enhanced_geo_relation(self, position: Point2D) -> str:
         """增强版地理关系描述：综合包含性、边界角和距离信息"""
         point = Point(position.x, position.y)
@@ -320,8 +324,8 @@ class QueryEngine:
                     min_corner_dist = corner_dist
                     closest_corner = Point2D(coord[0], coord[1])
                     
-            if min_corner_dist < 5.0:  # 5米内视为接近角落
-                corner_dir = self._get_direction(position, closest_corner)
+            if min_corner_dist < 10.0:  # 5米内视为接近角落
+                corner_dir = self._get_direction(closest_corner, position)
                 descriptions.append(
                     f"near {node.name}'s {corner_dir} corner "
                     f"({min_corner_dist:.1f}m)")
@@ -329,7 +333,7 @@ class QueryEngine:
                 
             # 情形3：外部普通方位
             descriptions.append(
-                f"{distance:.1f}m {direction} of {node.name}")
+                f"The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.")
         
         if not descriptions:
             return "No nearby landmarks detected"

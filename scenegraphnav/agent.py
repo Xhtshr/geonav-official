@@ -17,6 +17,7 @@ from PIL import Image
 
 from scenegraphnav.prompt.navgpt import *
 from scenegraphnav.prompt.geonav_cot import *
+# from scenegraphnav.prompt.geonav import *
 from gsamllavanav.actions import DiscreteAction
 from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
@@ -769,8 +770,8 @@ class GeonavAgent(Agent):
         self.save_path = args.output_dir
         
         # Whether parse the instruction or not, Retry parse instruction until process
-        while self.task_prior_knowledge is None:
-            self.task_prior_knowledge = self.controller.parse_instruction(self.episode.target_description, self.episode.description_landmarks)
+        # while self.task_prior_knowledge is None:
+        #     self.task_prior_knowledge = self.controller.parse_instruction(self.episode.target_description, self.episode.description_landmarks)
         self.landmark_nav_map = LandmarkNavMap(
                 episode.map_name, args.map_shape, args.map_pixels_per_meter, 
                 episode.description_landmarks, episode.description_target, episode.description_surroundings, args.gsam_params, id=episode.id, save_path=self.save_path)
@@ -809,7 +810,7 @@ class GeonavAgent(Agent):
             "object_locate":TARGET_LOCATE_PROMPT,# used
         }
     def call_response(self, sysprompt, userprompt, image_list):
-        if len(image_list)<=3 and sysprompt:
+        if 0<len(image_list)<=3 and sysprompt:
             rep = self.model.chat.completions.create(
                     model="gpt-4o",
                     messages=[
@@ -830,61 +831,12 @@ class GeonavAgent(Agent):
                     ],
                     max_tokens=500
                 )
-        elif 3<len(image_list)<=5:
+        elif userprompt and sysprompt:
             rep = self.model.chat.completions.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "user", "content": [
-                            {
-                                "type": "image_url",
-                                "image_url":{
-                                    "url":f"data:image/png;base64,{image_list[0]}"
-                                }
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url":{
-                                    "url":f"data:image/png;base64,{image_list[1]}"
-                                }
-                            },
-                            {
-                                "type": "text", 
-                                "text": userprompt
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=500
-                )
-        elif len(image_list)>=5:
-            rep = self.model.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "user", "content": [
-                            {
-                                "type": "image_url",
-                                "image_url":{
-                                    "url":f"data:image/png;base64,{image_list[-5]}"
-                                }
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url":{
-                                    "url":f"data:image/png;base64,{image_list[-3]}"
-                                }
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url":{
-                                    "url":f"data:image/png;base64,{image_list[-1]}"
-                                }
-                            },
-                            {
-                                "type": "text", 
-                                "text": userprompt
-                                }
-                            ]
-                        }
+                        {"role": "system", "content": sysprompt},
+                        {"role": "user", "content": userprompt}
                     ],
                     max_tokens=500
                 )
@@ -898,52 +850,29 @@ class GeonavAgent(Agent):
                 )
         return rep.choices[0].message.content.strip()
     def get_next_position(self, mode: str, target_json: dict):
-        if mode=='Navigate' and target_json['movement'] is not None:
-            self.history['decision'].append('Navigate')
-            direction = target_json['movement'].lower()
-            if 'northwest' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/10, self.controller.pose.y + self.view_width/10)
-            elif 'northeast' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/10, self.controller.pose.y + self.view_width/10)
-            elif 'southwest' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/10, self.controller.pose.y - self.view_width/10)
-            elif 'southeast' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/10, self.controller.pose.y - self.view_width/10)
-            elif 'south' in direction:
-                next_pos = (self.controller.pose.x, self.controller.pose.y - self.view_width/4)
-            elif 'north' in direction:
-                next_pos = (self.controller.pose.x, self.controller.pose.y + self.view_width/4)
-            elif 'west' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/4, self.controller.pose.y)
-            elif 'east' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/4, self.controller.pose.y)
-            else:
-                next_pos = (self.controller.pose.x, self.controller.pose.y)
-        elif mode=='Search':
-            self.history['decision'].append('Search')
-            try:
-                direction = target_json['movement'].lower()
-            except KeyError:
-                direction = target_json.get('answer', {}).get('movement', '').lower()
-            if 'northwest' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/20, self.controller.pose.y + self.view_width/20)
-            elif 'northeast' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/20, self.controller.pose.y + self.view_width/20)
-            elif 'southwest' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/20, self.controller.pose.y - self.view_width/20)
-            elif 'southeast' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/20, self.controller.pose.y - self.view_width/20)
-            elif 'south' in direction:
-                next_pos = (self.controller.pose.x, self.controller.pose.y - self.view_width/8)
-            elif 'north' in direction:
-                next_pos = (self.controller.pose.x, self.controller.pose.y + self.view_width/8)
-            elif 'west' in direction:
-                next_pos = (self.controller.pose.x - self.view_width/8, self.controller.pose.y)
-            elif 'east' in direction:
-                next_pos = (self.controller.pose.x + self.view_width/8, self.controller.pose.y)
-            else:
-                next_pos = (self.controller.pose.x, self.controller.pose.y)
-        elif mode=='Locate':
+        direction_map = {
+            'northwest': (-self.view_width/5, self.view_width/5),
+            'northeast': (self.view_width/5, self.view_width/5),
+            'southwest': (-self.view_width/5, -self.view_width/5),
+            'southeast': (self.view_width/5, -self.view_width/5),
+            'north': (0, self.view_width/4),
+            'south': (0, -self.view_width/4),
+            'west': (-self.view_width/4, 0),
+            'east': (self.view_width/4, 0)
+        }
+        action_scale = {
+            'Navigate': 1,
+            'Search': 3,
+        }
+        if mode in ['Navigate', 'Search']:
+            self.history['decision'].append(mode)
+            direction = target_json.get('movement', '').lower()
+            for key in direction_map.keys():
+                if key in direction:
+                    dx, dy = direction_map[key]
+                    next_pos = (self.controller.pose.x + dx/action_scale[mode], self.controller.pose.y + dy/action_scale[mode])
+                    break
+        elif mode == 'Locate':
             self.history['decision'].append('Locate')
             next_pos = target_json['selected_pos']
         else:
@@ -973,7 +902,7 @@ class GeonavAgent(Agent):
     
     def initialize_subtask(self, current_task):
         if current_task['strategy'] == 'Navigate':
-            self.sys_prompt = self.prompts["goal_description_nav"]
+            self.sys_prompt = ''#self.prompts["goal_description_nav"]
         elif current_task['strategy'] == 'Search':
             self.sys_prompt = self.prompts["goal_description_sea"]
         else: # 'Locate'
@@ -981,21 +910,27 @@ class GeonavAgent(Agent):
     
     def execute_subtask(self, task, geoinstruct, img_64):
         if task['strategy'] == 'Navigate':
-            # 输入地标地图、任务描述和地理指示，输出推理和行动，考虑采取一次性生成多个动作
-            img = self.gen_map(query_type='landmark')
+            img = []#self.gen_map(query_type='landmark')
             text_prompt = self.prompts['landmark_navigate'].format(geoinstruct=geoinstruct, goal=task['goal'], state=task['desired_state'])
         elif task['strategy'] == 'Search':
-            img = self.gen_map(query_type='semantic')
+            img = [self.gen_map(query_type='semantic')]
             text_prompt = self.prompts['object_search'].format(geoinstruct=geoinstruct, goal=task['goal'], state=task['desired_state'])
         elif task['strategy'] == 'Locate':
-            img = img_64
+            img = [img_64]
             text_prompt = self.prompts['object_locate'].format(pos=self.controller.pose.xy, area=self.xyxy, goal=self.episode.target_description)
+            operation_chain = self.generate_operation_chain(task['goal'])
+            target_nodes = self.recursive_query(operation_chain)
+            if target_nodes:
+                selected_node = target_nodes[0]
+                next_pos = (selected_node.position.x, selected_node.position.y)
+                return next_pos
+
         max_retries = 3
         retry_count = 0
         while retry_count < max_retries:
             enhanced_prompt = f"{text_prompt}\n\nPlease strictly follow the requirements below when responding:\n1. Use standard JSON format\n2. Include all required fields\n3. Wrap the response with ```json"
             try:
-                self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=[img])
+                self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=img)
                 target_json = extract_json_from_msg(self.action)
                 if target_json is not None:
                     break
@@ -1008,7 +943,14 @@ class GeonavAgent(Agent):
         self.landmark_nav_map.step += 1
         self.observation = text_prompt
         return next_pos
-    
+
+    def generate_operation_chain(self, goal_description):
+        # 使用LLM API生成操作链
+        prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        operation_chain = extract_json_from_msg(response)
+        return operation_chain
+
     def check_subgoals(self, task):
         if task['strategy'] == 'Navigate':
             if self.controller.timestep > 6: #防止陷入NotFound
@@ -1134,3 +1076,30 @@ class GeonavAgent(Agent):
             json.dump(self.results, f, indent=4)
 
         print(f"Results saved to {filepath}")
+
+    def recursive_query(self, operation_chain):
+        """递归查询以获取与任务相关的子图"""
+        current_nodes = self.controller.query_engine.subgraph_query(operation_chain)
+        if not current_nodes:
+            return None
+
+        continue_query = self.ask_llm_to_continue(current_nodes)
+        if continue_query:
+            new_operation_chain = self.generate_operation_chain_from_nodes(current_nodes)
+            return self.recursive_query(new_operation_chain)
+        else:
+            return current_nodes
+
+    def ask_llm_to_continue(self, nodes):
+        """询问 LLM 是否继续查询"""
+        node_descriptions = [f"Node {n.id} of type {n.type}" for n in nodes]
+        prompt = f"Current nodes: {', '.join(node_descriptions)}. Should we continue querying? Answer 'yes' or 'no'."
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        return 'yes' in response.lower()
+
+    def generate_operation_chain_from_nodes(self, nodes):
+        """根据当前节点生成新的操作链"""
+        # 这里可以根据节点的属性和任务目标生成新的操作链
+        # 例如，选择一个节点并生成一个基于该节点的查询
+        # 这部分需要根据具体的任务逻辑来实现
+        return []

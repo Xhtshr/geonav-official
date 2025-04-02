@@ -4,20 +4,19 @@ from openai import OpenAI
 
 # 构造 Prompt
 def create_prompt(instruction, landmarks):
-    return """You are a graph generator that converts natural language urban scene descriptions into a structured JSON graph. Your output must represent the scene as a graph with "nodes" and "edges". Each node represents an object, landmark, or scene element, and each edge represents a spatial relationship (i.e., a semantic link) between two nodes.
+    return """You are a graph generator that converts language descriptions into a structured JSON graph. Your output must represent the scene as a graph with "nodes" and "edges". Each node represents an object and each edge represents a semantic link between two nodes.
 Requirements:
-1. Each node must have a unique "id".
-2. Each node may include the following attributes:
+1. Don't process {} as nodes, because these landmark is not necessary and should not be included in the graph.
+2. Each node must have a unique "id".
+3. Each node may include the following attributes:
    - "object": the type or description of the object (e.g., "white-roofed house", "tree", "white car", "parking lot").
    - "bbox": a placeholder for bounding box coordinates in the format [xmin, ymin, xmax, ymax]. (place [] if not available)
    - "attributes": an object containing additional properties (e.g., "color", "size", "orientation", "roof type", etc.).
-3. Each edge must include:
+4. Each edge must include:
    - "source": the id of the source node.
    - "target": the id of the target node.
-   - "relationship": a description of the spatial or directional relationship (e.g., "in front", "behind", "across", "facing", "along", "near", "in between", "at bottom left").
-Notice: * ignore the landmark names for unnecessary identification, i.e. {}. And don't have to process them as nodes.
-you have some flexibility in defining node properties and relationship descriptions, so that the model can adaptively generate a suitable scene graph based on the instruction. Your output should capture the scene’s underlying graph structure by identifying objects, landmarks, and their spatial relationships.
-Now, based on these patterns, generate a JSON graph for a given scene instruction: {}.
+   - "relationship": a description of the spatial or directional relationship (e.g., "in front", "behind", ...).
+you have some flexibility in defining node properties and relationship descriptions. Now, based on these patterns, generate a JSON graph for a given instruction: {}.
 """.format(landmarks, instruction)
     return """You are a language navigation assistant. Your task is to analyze complex navigation instructions and extract the following structured information in JSON format:
 - Target: The main object or location to be navigated to. And list its attributes such as color, shape, etc.
