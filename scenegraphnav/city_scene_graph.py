@@ -34,7 +34,7 @@ class GeoNode(KnowledgeNode):
         self.child_objects = []  # 子对象ID列表
 
 class ObjectNode(KnowledgeNode):
-    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None, target=False, **attributes):
+    def __init__(self, detection_id, position, obj_class, confidence, timestamp=None, target=False, **attrs):
         super().__init__(
             node_id=detection_id,
             node_type='object',
@@ -44,9 +44,11 @@ class ObjectNode(KnowledgeNode):
         self.obj_class = obj_class
         self.confidence = confidence
         self.target = target
-        # 存储其他属性
-        for key, value in attributes.items():
+        
+        # 添加其他属性
+        for key, value in attrs.items():
             setattr(self, key, value)
+
 # ================== Spatial Index ==================
 class SpatialIndex:
     def __init__(self):
@@ -105,50 +107,40 @@ class KnowledgeGraph:
             self.spatial_index.idx.delete(hashed_id, None)
             del self.spatial_index.nodes[hashed_id]
     
-    def add_edge(self, source_id: str, target_id: str, relation_type: str):
+    def add_edge(self, source_id: str, target_id: str, relation_type: str, **attrs):
+        """添加带有属性的边"""
         if source_id not in self.nodes or target_id not in self.nodes:
             raise ValueError("Cannot create edge between non-existing nodes")
+        
+        # 添加基本边
         self.graph_nx.add_edge(source_id, target_id, relation_type=relation_type)
         self.digraph_nx.add_edge(source_id, target_id, relation_type=relation_type)
+        
+        # 添加其他属性
+        for key, value in attrs.items():
+            self.graph_nx[source_id][target_id][key] = value
+            self.digraph_nx[source_id][target_id][key] = value
 
     def add_geo_node(self, city_obj: CityReferObject):
         node = GeoNode(city_obj)
         self._add_node(node, 'geo')
     
-    def add_object_node(self, position, obj_class, confidence, timestamp: int, target: bool = False, **attributes):
-        # basic add node        
+    def add_object_node_with_attrs(self, position, attrs):
+        """添加带有多个属性的对象节点"""
+        obj_class = attrs.pop('obj_class')
+        confidence = attrs.pop('confidence')
+        timestamp = attrs.pop('timestamp')
+        target = attrs.pop('target', False)
+        
+        # 基本添加节点
         current_count = self.class_counters[obj_class]  # 获取当前计数
         node_id = f"{obj_class}_{current_count}"
-        node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target, **attributes)
+        node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target, **attrs)
         Flag = self._add_node(node, obj_class)
         if Flag:
             return Flag
-        # # 重检测(降低节点被记忆的几率）
-        # for key, (temp_node, first_timestamp) in list(self.temp_nodes.items()):
-        #     if temp_node.confidence > 0.5:
-        #         del self.temp_nodes[key]
-        #         current_count = self.class_counters[obj_class]
-        #         node_id = f"{obj_class}_{current_count}"
-        #         node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
-        #         self._add_node(node, obj_class)
-        #         continue
-        #     if temp_node.obj_class == obj_class and self._distance(temp_node.position, position) < 15.0:
-        #         # 第二次检测到：正式添加节点
-        #         del self.temp_nodes[key]
-        #         current_count = self.class_counters[obj_class]
-        #         node_id = f"{obj_class}_{current_count}"
-        #         node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
-        #         self._add_node(node, obj_class)
-        #         return
-
-        # # 第一次检测到：存储到临时节点
-        # position_hash = hash((round(position.x, 1), round(position.y, 1)))
-        # key = (obj_class, position_hash)
-        # node_id = self.class_counters['temp']  # 使用全局计数器
-        # self.class_counters['temp'] += 1
-        # node = ObjectNode(node_id, position, obj_class, confidence, timestamp, target)
-        # self.temp_nodes[key] = (node, timestamp)
         return node_id
+
     def _add_node(self, node, obj_class):
         # 简单去重策略：相同位置同类型视为同一对象
         existing = self.spatial_index.query_radius(node.position, 20.0)
@@ -167,10 +159,10 @@ class KnowledgeGraph:
 
 # ================== 查询引擎 ==================
 class QueryEngine:
-    DIRECTION_NAMES = ["East", "Northeast", "North", "Northwest", "West", "Southwest", "South", "Southeast"]
     
     def __init__(self, graph: KnowledgeGraph):
         self.graph = graph
+        self.DIRECTION_NAMES = ["East", "Northeast", "North", "Northwest", "West", "Southwest", "South", "Southeast"]
     
     def get_context(self, position: Point2D, radius=10.0):
         nodes = self.graph.spatial_index.query_radius(position, radius)
@@ -229,46 +221,91 @@ class QueryEngine:
         """链式查询框架"""
         current_nodes = None
         for op in operation_chain:
-            func = getattr(self, op['method'])
-            if op.get('kwargs', {}) == {}:
-                continue
+            method_name = op['method']
+            func = getattr(self, method_name)
+            
             # 检查是否需要 parent_node 参数
-            if op['method'] == 'get_child_nodes':
+            if method_name == 'get_child_nodes':
                 if current_nodes is None or len(current_nodes) == 0:
-                    continue
+                    raise ValueError("No parent node available for get_child_nodes operation")
                 # 假设使用第一个节点作为 parent_node
                 parent_node = current_nodes[0]
                 current_nodes = func(parent_node, **op.get('kwargs', {}), candidates=current_nodes)
+            elif method_name == 'get_geonode_by_name':
+                # 特殊处理 get_geonode_by_name，当 args 为空时使用所有地理节点
+                args = op.get('args', [])
+                if not args or (len(args) == 1 and not args[0]):
+                    # 如果没有提供名称模式，则返回所有地理节点
+                    current_nodes = [n for n in self.graph.nodes.values() if isinstance(n, GeoNode)]
+                else:
+                    current_nodes = func(*args, candidates=current_nodes)
+            elif method_name in ['filter_by_class', 'filter_by_attribute']:
+                # 确保 current_nodes 不为 None
+                if current_nodes is None or current_nodes == []:
+                    current_nodes = list(self.graph.nodes.values())
+                current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
             else:
+                # 其他方法
                 current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
             
             if not current_nodes:
                 break
         return current_nodes
-    def get_geonode_by_name(self, name_pattern: str, candidates=None):
+    def get_geonode_by_name(self, name_pattern: str):
         """名称匹配地理节点"""
-        nodes = candidates if candidates else self.graph.nodes.values()
-        return [n for n in nodes if isinstance(n, GeoNode)
+        nodes = self.graph.nodes.values()
+        return [n for n in nodes if isinstance(n, GeoNode) 
                and name_pattern.lower() in n.name.lower()]
-    def get_child_nodes(self, parent_node, relation_type: str, 
-                       candidates=None):
+    def get_child_nodes(self, parent_node, relation_type: str):
         """获取指定关系的子节点"""
+        # 验证关系类型是否有效
+        valid_relations = [
+            "contains", "adjacent_to", "near_corner", 
+            "north_of", "south_of", "east_of", "west_of",
+            "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+        ]
+        
+        if relation_type not in valid_relations:
+            print(f"Warning: Invalid relation type '{relation_type}'. Using 'contains' instead.")
+            relation_type = "contains"
+        
         children = []
         for edge in self.graph.digraph_nx.out_edges(parent_node.id, data=True):
             if edge[2]['relation_type'] == relation_type:
                 child = self.graph.nodes[edge[1]]
-                if not candidates or child in candidates:
-                    children.append(child)
+                children.append(child)
         return children
     def filter_by_class(self, obj_class: str, candidates):
         """按类别过滤物体节点""" 
         return [n for n in candidates if isinstance(n, ObjectNode) 
-               and obj_class in n.obj_class]
+               and n.obj_class == obj_class]
     def filter_by_attribute(self, key: str, value: str, candidates):
         """按属性过滤物体节点"""
         return [n for n in candidates if isinstance(n, ObjectNode) 
-               and getattr(n, key, None) == value]  # 确保属性存在并匹配
-
+               and hasattr(n, key) and getattr(n, key) == value]
+    def multi_hop_search(self, start_node, target_relation: str, target_class: str, max_hops: int = 10):
+        """多跳搜索以找到符合条件的节点"""
+        from collections import deque
+        
+        queue = deque([(start_node, 0)])  # (current_node, current_hop_count)
+        visited = set()
+        
+        while queue:
+            current_node, current_hop_count = queue.popleft()
+            
+            if current_hop_count > max_hops:
+                break
+            
+            for edge in self.graph.digraph_nx.out_edges(current_node.id, data=True):
+                if edge[2]['relation_type'] == target_relation:
+                    child = self.graph.nodes[edge[1]]
+                    if isinstance(child, ObjectNode) and child.obj_class == target_class:
+                        return child
+                    if child not in visited:
+                        visited.add(child)
+                        queue.append((child, current_hop_count + 1))
+        
+        return None  # 如果没有找到符合条件的节点
     @staticmethod
     def _calc_distance(p1: Point2D, p2: Point2D):
         return math.hypot(p1.x - p2.x, p1.y - p2.y)
@@ -279,18 +316,16 @@ class QueryEngine:
         angle = math.degrees(math.atan2(dy, dx)) % 360
         return self.DIRECTION_NAMES[round(angle / 45) % 8]
     def is_within_geo_node(self, position: Point2D):
-
-        point = Point(position.x, position.y)
-        name_list = []
-        for node in self.graph.nodes.values():
-            if isinstance(node, GeoNode):
-                polygon = node.contour_polygon
-                if polygon.contains(point):
-                    name_list.append(node.name)
-        if name_list:
-            return f' in {", ".join(name_list)}'
-        return f' not in any landmarks. '
-
+         point = Point(position.x, position.y)
+         name_list = []
+         for node in self.graph.nodes.values():
+             if isinstance(node, GeoNode):
+                 polygon = node.contour_polygon
+                 if polygon.contains(point):
+                     name_list.append(node.name)
+         if name_list:
+             return f' in {", ".join(name_list)}'
+         return f' not in any landmarks. '
     def get_enhanced_geo_relation(self, position: Point2D) -> str:
         """增强版地理关系描述：综合包含性、边界角和距离信息"""
         point = Point(position.x, position.y)
@@ -313,7 +348,7 @@ class QueryEngine:
                     Point2D(centroid.x, centroid.y), 
                     position
                 )
-                descriptions.append(f"inside {node.name} ({intra_direction} area)")
+                descriptions.append(f"You are inside {node.name} ({intra_direction} area)")
                 continue
                 
             # 情形2：接近多边形顶点（角落检测）
@@ -324,7 +359,7 @@ class QueryEngine:
                     min_corner_dist = corner_dist
                     closest_corner = Point2D(coord[0], coord[1])
                     
-            if min_corner_dist < 10.0:  # 5米内视为接近角落
+            if min_corner_dist < 5.0:  # 5米内视为接近角落
                 corner_dir = self._get_direction(closest_corner, position)
                 descriptions.append(
                     f"near {node.name}'s {corner_dir} corner "
@@ -333,7 +368,7 @@ class QueryEngine:
                 
             # 情形3：外部普通方位
             descriptions.append(
-                f"The '{node.name}' at a distance of {distance:.1f} meters towards {direction}.")
+                f"{node.name} is {distance:.1f}m {direction} of you")
         
         if not descriptions:
             return "No nearby landmarks detected"

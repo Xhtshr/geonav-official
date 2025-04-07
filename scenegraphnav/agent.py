@@ -16,8 +16,8 @@ from utils.QwenAPI import encode_image_from_pil
 from PIL import Image
 
 from scenegraphnav.prompt.navgpt import *
-from scenegraphnav.prompt.geonav_cot import *
-# from scenegraphnav.prompt.geonav import *
+# from scenegraphnav.prompt.geonav_cot import *
+from scenegraphnav.prompt.geonav import *
 from gsamllavanav.actions import DiscreteAction
 from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
@@ -211,7 +211,6 @@ class ChatAgent(Agent):
             "task_description": TASK_DESCRIPTION_PROMPT,
             "action_prompt": ACTION_PROMPT,
             "planner_prompt": PLANNER_PROMPT,
-            "history_prompt": HISTORY_PROMPT,
             "observation_prompt": OBSERVATION_SUMMARY,
             "object_caption": OBSERVATION_CAPTION,
             "object_grounding":OBJECT_GROUNDING,
@@ -400,7 +399,6 @@ class SceneAgent(Agent):
             "task_description": TASK_DESCRIPTION_PROMPT,
             "action_prompt": ACTION_PROMPT,
             "planner_prompt": PLANNER_PROMPT,
-            "history_prompt": HISTORY_PROMPT,
             "observation_prompt": OBSERVATION_SUMMARY,
             "object_caption": OBSERVATION_CAPTION,
             "object_grounding":OBJECT_GROUNDING,
@@ -674,19 +672,6 @@ class SceneAgent(Agent):
             history_prompt = self.prompts["history_prompt"].format(history=self.history, observation=self.observation, previous_action = self.previous_action)
             self.history = gpt_api_call(prompt=history_prompt)
             
-            # conversation = [
-            #     {
-            #         "role": "user", 
-            #         "content": [
-            #             {
-            #                 "type": "image",
-            #             },
-            #             {"type": "text", "text": history_prompt},
-            #         ],
-            #     }
-            # ]
-            # text_prompt = self.processor.apply_chat_template(conversation, add_generation_prompt=True)
-            # inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
         elif mode == "action":
             # 将任务描述和动作提示合并
             prompt_template = self.prompts["action_prompt"].format(history=self.history, observation=self.observation, key_feature='')
@@ -738,22 +723,14 @@ class GeonavAgent(Agent):
         super().__init__(args, initial_pose, episode)
         self.episode = episode
         self.target = self.episode.target_position
-        self.set_height = set_height  # 保存set_height参数
         if set_height is not None:
             initial_pose.with_z(set_height)
         
         self.controller = LLMController(args, initial_pose)
         self.model = vlmodel
-        #  local model
-        if isinstance(self.model, Qwen2VLForConditionalGeneration):
-            min_pixels = 256 * 28 * 28
-            max_pixels = 1280 * 28 * 28
-            self.processor = AutoProcessor.from_pretrained(
-                "/data1/FoundationModels/Qwen", min_pixels=min_pixels, max_pixels=max_pixels
-            )
         
         self.prompts = self.init_prompts()
-        self.history = {'decision':[], 'surrounding': [], 'landmark': []}
+        self.history = {'decision':[], 'action': [], 'observation': []}
         self.action = ''
         self.observation = ''
         self.results = {
@@ -786,34 +763,29 @@ class GeonavAgent(Agent):
         #         episode.description_landmarks, episode.description_target, episode.description_surroundings, args.gsam_params, id=episode.id, save_path=self.save_path)
         self.previous_sem_map = np.zeros((*self.landmark_nav_map.shape, 3), dtype=np.float32) # RGB matrix
         self.strategy_distances = {}
+
+        # 添加用于控制 VLM 识别频率的变量
+        self.last_vlm_detection_time = 0  # 上次 VLM 检测的时间步
+        self.vlm_detection_interval = 4   # VLM 检测的间隔步数（可配置）
+        self.vlm_detection_distance = 20  # 移动距离阈值（米），超过此距离触发新的检测
+        self.last_vlm_detection_position = initial_pose.xy  # 上次 VLM 检测的位置
     def init_prompts(self):
         """
         初始化所有任务相关的 Prompt 模板。
         """
-        return {
-            "task_description": TASK_DESCRIPTION_PROMPT,
-            "short_description": TASK_DESCRIPTION_SHORT,
-            "action_prompt": ACTION_PROMPT,
+        return {# used only
             "planner_prompt": PLANNER_PROMPTV2,
-            "history_prompt": HISTORY_PROMPT,
-            "observation_prompt": OBSERVATION_SUMMARY,
-            "multi_observation": MULTI_OBSERVATION_SUMMARY,
-            "object_caption": OBSERVATION_CAPTION,
-            "object_grounding":OBJECT_GROUNDING,
-            "map_prompt": MAP_SUMMARY,
-            "task_description_map":TASK_DESCRIPTION_FORMAP,
-            "goal_description_nav": GOAL_DESCRIPTION_NAV,# used
-            "landmark_navigate":LANDMARK_NAVIGATION_PROMPT,# used
-            "goal_description_sea": GOAL_DESCRIPTION_SEA,# used
-            "object_search":OBJECT_SEARCH_PROMPT,# used
-            "goal_description_loc": GOAL_DESCRIPTION_LOC,# used
-            "object_locate":TARGET_LOCATE_PROMPT,# used
+            "landmark_prompt": LANDMARK_DESCRIPTION,
+            "goal_description_nav": GOAL_DESCRIPTION_NAV,
+            "landmark_navigate":LANDMARK_NAVIGATION_PROMPT,
+            "goal_description_sea": GOAL_DESCRIPTION_SEA,
+            "object_search":OBJECT_SEARCH_PROMPT,
+            "goal_description_loc": GOAL_DESCRIPTION_LOC,
+            "object_locate":TARGET_LOCATE_PROMPT,
         }
     def call_response(self, sysprompt, userprompt, image_list):
-        if 0<len(image_list)<=3 and sysprompt:
-            rep = self.model.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
+        if 0<len(image_list) and sysprompt:
+            messages=[
                         {"role": "system", "content": sysprompt},
                         {"role": "user", "content": [
                             {
@@ -828,28 +800,24 @@ class GeonavAgent(Agent):
                                 }
                             ]
                         }
-                    ],
-                    max_tokens=500
-                )
-        elif userprompt and sysprompt:
-            rep = self.model.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
+                    ]
+        elif sysprompt:
+            messages=[
                         {"role": "system", "content": sysprompt},
                         {"role": "user", "content": userprompt}
-                    ],
-                    max_tokens=500
-                )
+                    ]
         elif userprompt:
-            rep = self.model.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
+            messages=[
                         {"role": "user", "content": userprompt}
-                    ],
-                    max_tokens=500
-                )
+                    ]
+        rep = self.model.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                max_tokens=500
+            )
         return rep.choices[0].message.content.strip()
     def get_next_position(self, mode: str, target_json: dict):
+        next_pos = (self.controller.pose.x, self.controller.pose.y)
         direction_map = {
             'northwest': (-self.view_width/5, self.view_width/5),
             'northeast': (self.view_width/5, self.view_width/5),
@@ -870,13 +838,13 @@ class GeonavAgent(Agent):
             for key in direction_map.keys():
                 if key in direction:
                     dx, dy = direction_map[key]
+                    self.history['action'].append(key)
                     next_pos = (self.controller.pose.x + dx/action_scale[mode], self.controller.pose.y + dy/action_scale[mode])
                     break
         elif mode == 'Locate':
             self.history['decision'].append('Locate')
             next_pos = target_json['selected_pos']
-        else:
-            next_pos = (self.controller.pose.x, self.controller.pose.y)
+            self.history['action'].append(next_pos)
         return next_pos
     
     def gen_map(self, query_type):
@@ -902,7 +870,7 @@ class GeonavAgent(Agent):
     
     def initialize_subtask(self, current_task):
         if current_task['strategy'] == 'Navigate':
-            self.sys_prompt = ''#self.prompts["goal_description_nav"]
+            self.sys_prompt = self.prompts["goal_description_nav"]
         elif current_task['strategy'] == 'Search':
             self.sys_prompt = self.prompts["goal_description_sea"]
         else: # 'Locate'
@@ -918,11 +886,12 @@ class GeonavAgent(Agent):
         elif task['strategy'] == 'Locate':
             img = [img_64]
             text_prompt = self.prompts['object_locate'].format(pos=self.controller.pose.xy, area=self.xyxy, goal=self.episode.target_description)
-            operation_chain = self.generate_operation_chain(task['goal'])
+            operation_chain = self.generate_operation_chain(task['goal']+'. ' +task['desired_state'])
             target_nodes = self.recursive_query(operation_chain)
             if target_nodes:
                 selected_node = target_nodes[0]
                 next_pos = (selected_node.position.x, selected_node.position.y)
+                print('---use graph memory---')
                 return next_pos
 
         max_retries = 3
@@ -946,21 +915,23 @@ class GeonavAgent(Agent):
 
     def generate_operation_chain(self, goal_description):
         # 使用LLM API生成操作链
-        prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
-        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
-        operation_chain = extract_json_from_msg(response)
+        operation_chain = None
+        while not operation_chain:
+            prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
+            response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+            operation_chain = extract_json_from_msg(response)
         return operation_chain
 
     def check_subgoals(self, task):
         if task['strategy'] == 'Navigate':
             if self.controller.timestep > 6: #防止陷入NotFound
-                self.strategy_distances['Navigate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
+                self.strategy_distances['Navigate'] = self.controller.pose.xy.dist_to(self.target.xy)
                 return True
             # check if any landmarks are reached
             return all(lm.position.xy.dist_to(self.controller.pose.xy) < 50.0 for lm in self.landmark_nav_map.landmark_map.landmarks)
         elif task['strategy'] == 'Search':
             if self.controller.timestep > 15: #防止陷入search around
-                self.strategy_distances['Search'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
+                self.strategy_distances['Search'] = self.controller.pose.xy.dist_to(self.target.xy)
                 return True
             # evaluate whether the information has changed
             sem_map = self.landmark_nav_map.get_semantic_map()
@@ -982,7 +953,7 @@ class GeonavAgent(Agent):
         strategy = ''
         pos_log = []
         image_list = []
-        self.strategy_distances['Start'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
+        self.strategy_distances['Start'] = self.controller.pose.xy.dist_to(self.target.xy)
         # 添加终止条件变量
         while self.controller.timestep < self.args.eval_max_timestep:
             rgb, _ = self.controller.perceive(self.controller.pose, self.episode.map_name)
@@ -996,19 +967,34 @@ class GeonavAgent(Agent):
                 self.controller.pose, rgb, None, use_gsam_map_cache=False, strategy=strategy
             )
             # detect and memory the scene objects
-            detect_mode = 'VLM' #'GSAM'
+            detect_mode = 'VLM'  # 'GSAM'
             landmark = self.controller.build_geo_nodes(self.landmark_nav_map.landmark_map.landmarks)
-            if detect_mode == 'VLM' and strategy == 'Search':
-                # TODO test the effect of VLM
+            
+            # 判断是否需要执行 VLM 检测
+            current_position = self.controller.pose.xy
+            time_condition = self.controller.timestep - self.last_vlm_detection_time >= self.vlm_detection_interval
+            distance_condition = current_position.dist_to(self.last_vlm_detection_position) >= self.vlm_detection_distance
+            
+            if detect_mode == 'VLM' and strategy == 'Search' and (time_condition or distance_condition):
+                # 执行 VLM 检测
+                print(f"Executing VLM detection at timestep {self.controller.timestep}")
                 subgraph = self.controller.understand(image_64, self.episode)
-                # Translate into world_xy
+                # 转换为世界坐标
                 self.controller.build_scene_graph(subgraph, self.landmark_nav_map.target_map)
+                
+                # 更新上次检测的时间和位置
+                self.last_vlm_detection_time = self.controller.timestep
+                self.last_vlm_detection_position = current_position
             elif detect_mode == 'GSAM':
                 # Graph memory
-                surrounding, recent_objects = self.controller.build_scene_nodes(self.landmark_nav_map.target_map.obj_list, self.landmark_nav_map.surroundings_map.obj_list, show=False)
+                surrounding, recent_objects = self.controller.build_scene_nodes(
+                    self.landmark_nav_map.target_map.obj_list, 
+                    self.landmark_nav_map.surroundings_map.obj_list, 
+                    show=False
+                )
 
             # Step 1: system Prompt
-            geoinstruct = self.prompts["history_prompt"].format(landmark=landmark, recent_objects='', surroundings='')
+            geoinstruct = self.prompts["landmark_prompt"].format(landmark=landmark, recent_objects='', surroundings='')
             self.view_width = 2 * (self.controller.pose.z-self.landmark_nav_map.ground_level)
 
             # Step 2: static planning
@@ -1042,15 +1028,15 @@ class GeonavAgent(Agent):
                 # 检查是否所有任务完成
                 if self.current_task_index >= len(self.plan['sub_goals']):
                     print("All sub-tasks completed!")
-                    self.strategy_distances['Locate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
+                    self.strategy_distances['Locate'] = self.controller.pose.xy.dist_to(self.target.xy)
                     break  # 提前退出循环
             self.results["steps"].append({
                 "time_step": self.controller.timestep,
                 "pose": (self.controller.pose.x, self.controller.pose.y, self.controller.pose.z, self.controller.pose.yaw),
                 "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
                 "plan": current_task,
-                "observation_suggestion":self.observation,
-                "action_suggestion": self.action
+                "observation":self.observation,
+                "action": self.action
             })
             # 记录当前位置
             pos_log.append(self.controller.pose)
@@ -1060,7 +1046,6 @@ class GeonavAgent(Agent):
 
 
     def save_results(self, success):
-        # 生成唯一的文件名，包含set_height信息
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"GeonavAgent_{self.episode.id}_{timestamp}.json"
         filepath = os.path.join(self.save_path, filename)# self.save_path
@@ -1079,16 +1064,39 @@ class GeonavAgent(Agent):
 
     def recursive_query(self, operation_chain):
         """递归查询以获取与任务相关的子图"""
-        current_nodes = self.controller.query_engine.subgraph_query(operation_chain)
-        if not current_nodes:
-            return None
+        try:
+            # 验证操作链中的关系类型
+            for op in operation_chain:
+                if op['method'] == 'get_child_nodes' and 'kwargs' in op and 'relation_type' in op['kwargs']:
+                    relation_type = op['kwargs']['relation_type']
+                    valid_relations = [
+                        "contains", "adjacent_to", "near_corner", 
+                        "north_of", "south_of", "east_of", "west_of",
+                        "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+                    ]
+                    if relation_type not in valid_relations:
+                        print(f"Warning: Invalid relation type '{relation_type}'. Using 'contains' instead.")
+                        op['kwargs']['relation_type'] = "contains"
+            current_nodes = self.controller.query_engine.subgraph_query(operation_chain)
+            if not current_nodes:
+                print("No nodes found with the current operation chain.")
+                return None
 
-        continue_query = self.ask_llm_to_continue(current_nodes)
-        if continue_query:
-            new_operation_chain = self.generate_operation_chain_from_nodes(current_nodes)
-            return self.recursive_query(new_operation_chain)
-        else:
-            return current_nodes
+            # 打印找到的节点信息，帮助调试
+            print(f"Found {len(current_nodes)} nodes:")
+            for node in current_nodes:
+                print(f"  - {node.id} ({node.type})")
+
+            continue_query = self.ask_llm_to_continue(current_nodes)
+            if continue_query:
+                new_operation_chain = self.generate_operation_chain_from_nodes(current_nodes)
+                return self.recursive_query(new_operation_chain)
+            else:
+                return current_nodes
+        except Exception as e:
+            print(f"Error in recursive_query: {e}")
+            # 返回一个默认节点或者None
+            return None
 
     def ask_llm_to_continue(self, nodes):
         """询问 LLM 是否继续查询"""
@@ -1099,7 +1107,19 @@ class GeonavAgent(Agent):
 
     def generate_operation_chain_from_nodes(self, nodes):
         """根据当前节点生成新的操作链"""
-        # 这里可以根据节点的属性和任务目标生成新的操作链
-        # 例如，选择一个节点并生成一个基于该节点的查询
-        # 这部分需要根据具体的任务逻辑来实现
-        return []
+        # 生成描述当前节点的文本
+        node_descriptions = [f"Node {n.id} of type {n.type}" for n in nodes]
+        node_text = ", ".join(node_descriptions)
+        
+        # 生成提示
+        prompt = QUERY_OPERATION_PROMPT.format(node_text=node_text)
+        
+        # 调用LLM生成新的操作链
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        operation_chain = extract_json_from_msg(response)
+        
+        if not operation_chain:
+            # 如果LLM未能生成有效的操作链，返回一个默认的操作链
+            return []
+        
+        return operation_chain

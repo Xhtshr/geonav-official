@@ -24,8 +24,6 @@ You are currently {geoinstruct}. Your assigned goal is: {goal}. Your desired sta
 Based on the top-down map, determine the direction you need to move to achieve the goal.
 <question>
 
-Your response should include two sections: **thought** and **answer**.
-
 <thought>
 Provide your reasoning and step-by-step thought process here.
 <thought>
@@ -48,8 +46,6 @@ You are currently near the city landmarks and should search the area according t
 Based on the top-down map, determine the direction you need to move to achieve the goal.
 <question>
 
-Your response should include two sections: **thought** and **answer**.
-
 <thought>
 Provide your reasoning and step-by-step thought process here.
 <thought>
@@ -71,8 +67,6 @@ Your assigned goal is: {goal}. You are currently flying above the target and nee
 If you identify the target, determine its position in real-world coordinates. Answer the following question:
 <question>
 
-Your response should include two sections: **thought** and **answer**.
-
 <thought>
 Provide your reasoning and a step-by-step explanation of your thought process here.
 <thought>
@@ -89,22 +83,26 @@ Your answer should follow the json format and only includes two components: **re
 
 QUERY_OPERATION_CHAIN_PROMPT  = """
     Converts navigation commands into a chain of query operations. Available operations:
-    - get_geonode_by_name(name_pattern)
-    - get_child_nodes(parent, relation_type)
-    - filter_by_class(obj_class)
-    - filter_by_attribute(key, value)
-    - sort_by_corner(parent, corner)
+    - get_geonode_by_name(name_pattern): 根据名称模式查找地理节点。如果不提供名称，则返回所有地理节点。
+    - get_child_nodes(parent, relation_type): 获取与父节点具有指定关系的子节点。
+    - filter_by_class(obj_class): 按类别过滤物体节点。
+    - filter_by_attribute(key, value): 按属性过滤物体节点。
 
-    Example instruction: "The gray car in the bottom left of parking lot at NT Wholesale"
+    Example instruction: "Find the red car near the main entrance of the shopping mall"
     return operation chain:
     [
-        {{"method": "get_geonode_by_name", "args": ["NT Wholesale"]}},
-        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
-        {{"method": "filter_by_class", "args": ["parking_lot"]}},
-        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
+        {{"method": "get_geonode_by_name", "args": ["shopping mall"]}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "near"}}}},
         {{"method": "filter_by_class", "args": ["car"]}},
-        {{"method": "filter_by_attribute", "kwargs": {{"color": "gray"}}}},
-        {{"method": "sort_by_corner", "args": ["bottom-left"]}}
+        {{"method": "filter_by_attribute", "kwargs": {{"color": "red"}}}}
+    ]
+
+    Example instruction: "Locate the brown house"
+    return operation chain:
+    [
+        {{"method": "get_geonode_by_name", "args": [""]}},  // 返回所有地理节点
+        {{"method": "filter_by_class", "args": ["house"]}},
+        {{"method": "filter_by_attribute", "kwargs": {{"color": "brown"}}}}
     ]
 
     Current instruction: {instruction}

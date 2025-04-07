@@ -75,14 +75,14 @@ Your answer should include two components: **reason** and **selected_pos**. [x, 
     }}```
 <answer>"""
 
-LOCAL_GRPAH_PROMPT = """
+LOCAL_GRAPH_PROMPT = """
 You are a geospatial scene graph extractor analyzing a north-aligned satellite image. 
 Your task is to recognize {objects} and their relationships into a structured JSON graph following these strict rules:
 
 **Node Requirements**
 1. Each node must have a unique `id`.
 2. Mandatory attributes for every node:
-- `object_type`: one of ["vehicle", "road", "building", "parking_lot", "green_space"]
+- `object_type`: one of ["vehicle", "road", "building", "parking_lot", "green_space", etc]
 - `bbox`: bounding box coordinates [xmin, ymin, xmax, ymax]
 3. Optional attribute (only if clearly observable):
 - `color`: one of ["white", "black", "red", "gray", "blue", "green", "brown", "silver"]
@@ -90,31 +90,29 @@ Your task is to recognize {objects} and their relationships into a structured JS
 **Edge Requirements**
 1. Only use the following relationship labels, with these meanings:
 - **Topological**: 
-    - "connected_to" (objects sharing a boundary or physically connected)
-    - "contained_in" (one object is completely within another)
-    - "adjacent_to" (objects are immediately beside one another, equivalent to "next to")
+    - "contains" (one object is completely within another)
+    - "adjacent_to" (objects are immediately beside one another)
+    - "near_corner" (object is close to a corner of another object)
 - **Directional** (absolute, from aerial perspective):
-    - "north_of", "south_of", "east_of", "west_of"
-- **Structural**:
-    - "between" (object located between two reference objects)
-    - "across_from" (object is directly opposite, with a road or clear gap as connection)
-    - "sequence_ordered" (for explicitly ordered arrangements, with a direction suffix)
-2. Absolute directional relationships take priority over relative terms. For instance, if a description says "behind", interpret it as "north_of" (given the aerial view).
+    - Primary: "north_of", "south_of", "east_of", "west_of"
+    - Diagonal: "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+
+2. Absolute directional relationships take priority over relative terms:
+    - "behind" → convert to "north_of"
+    - "next to" → convert to "adjacent_to"
+    - "in" → convert to "contains"
 
 **Special Cases & Handling of Ambiguities**
-1. **Parking Order Descriptions**:
-- Use "sequence_ordered" with an explicit direction suffix (e.g., "sequence_ordered:south_to_north").
-- If a sequence is mentioned (e.g., "1st from the bottom"), include an optional `order_index` (starting from 1).
-2. **Building and Other Object Relationships**:
+1. **Building and Other Object Relationships**:
 - Map ambiguous relative terms:
     - "behind" → convert to "north_of"
     - "next to" → convert to "adjacent_to"
     - "across from" remains as "across_from" (typically with a connecting road node)
-3. **Preset Landmarks**:
+2. **Preset Landmarks**:
 - Names like "Leslie Road", "Bridgelands Way", "Livingstone Road", etc., are considered preset. Do not extract these from the image; focus solely on dynamic objects and visible spatial relations.
-4. **Ambiguity Reduction**:
+3. **Ambiguity Reduction**:
 - Limit your relationship predicate set to the ones provided. This finite vocabulary helps eliminate ambiguity and ensures consistent mapping from natural language descriptions to spatial relationships.
-5. **Hierarchical and Iterative Extraction**:
+4. **Hierarchical and Iterative Extraction**:
 - First, build an initial graph based on absolute spatial cues (from the north-aligned image).
 - Then, refine relationships using explicit ordering and structural cues from the description.
 
@@ -138,8 +136,7 @@ For "white car parked 1st from bottom in right column":
     {{
     "source": "White01",
     "target": "ParkingLot07",
-    "relationship": "sequence_ordered:south_to_north",
-    "order_index": 1
+    "relationship": "contains"
     }}
 ]
 }}
@@ -150,22 +147,51 @@ Now analyze: {objects}
 
 QUERY_OPERATION_CHAIN_PROMPT  = """
     Converts navigation commands into a chain of query operations. Available operations:
-    - get_geonode_by_name(name_pattern)
-    - get_child_nodes(parent, relation_type)
-    - filter_by_class(obj_class)
-    - filter_by_attribute(key, value)
-    - sort_by_corner(parent, corner)
+    - get_geonode_by_name(name_pattern): 根据名称模式查找地理节点。如果不提供名称，则返回所有地理节点。
+    - get_child_nodes(parent, relation_type): 获取与父节点具有指定关系的子节点。
+      可用的关系类型有: "contains", "adjacent_to", "near_corner", "north_of", "south_of", "east_of", "west_of", "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+    - filter_by_class(obj_class): 按类别过滤物体节点。one of ["vehicle", "road", "building", "parking_lot", "green_space", etc]
+    - filter_by_attribute(key, value): 按属性过滤物体节点。
 
     Example instruction: "Find the red car near the main entrance of the shopping mall"
     return operation chain:
     [
         {{"method": "get_geonode_by_name", "args": ["shopping mall"]}},
-        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "near"}}}},
-        {{"method": "filter_by_class", "args": ["car"]}},
-        {{"method": "filter_by_attribute", "kwargs": {{"color": "red"}}}},
-        {{"method": "sort_by_corner", "args": ["main entrance"]}}
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "adjacent_to"}}}},
+        {{"method": "filter_by_class", "args": ["vehicle"]}},
+        {{"method": "filter_by_attribute", "kwargs": {{"color": "red"}}}}
+    ]
+
+    Example instruction: "Locate the brown house"
+    return operation chain:
+    [
+        {{"method": "get_geonode_by_name", "args": [""]}},  // 返回所有地理节点
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},  // 查找地理节点包含的对象
+        {{"method": "filter_by_class", "args": ["building"]}},
+        {{"method": "filter_by_attribute", "kwargs": {{"color": "brown"}}}}
+    ]
+
+    Example instruction: "Find the car next to the park"
+    return operation chain:
+    [
+        {{"method": "get_geonode_by_name", "args": ["park"]}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "adjacent_to"}}}},
+        {{"method": "filter_by_class", "args": ["car"]}}
     ]
 
     Current instruction: {instruction}
     Please output the chain of operations in JSON format:
+    """
+
+QUERY_OPERATION_PROMPT  = """
+    Based on the current nodes: {node_text}
+
+    Generate a new operation chain to further refine the search for the target object.
+    Available operations:
+    - get_child_nodes(parent, relation_type): 获取与父节点具有指定关系的子节点。
+    可用的关系类型有: "contains", "adjacent_to", "near_corner", "north_of", "south_of", "east_of", "west_of", "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+    - filter_by_class(obj_class): 按类别过滤物体节点。
+    - filter_by_attribute(key, value): 按属性过滤物体节点。
+
+    Return the operation chain in JSON format.
     """
