@@ -696,7 +696,6 @@ class SceneAgent(Agent):
             inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt")
         else:
             raise ValueError("Invalid mode. Choose from 'observation', 'history', or 'action'.")
-
         
         return inputs.to("cuda")
 
@@ -716,7 +715,6 @@ class SceneAgent(Agent):
         )
         print(f"Generated Suggestion: {output_text}")
         return output_text[0]  # 假设返回单步动作
-
 
 class GeonavAgent(Agent):
     def __init__(self, args: ExperimentArgs, initial_pose: Pose4D, episode: Episode, vlmodel, set_height=None):
@@ -806,6 +804,7 @@ class GeonavAgent(Agent):
                         {"role": "system", "content": sysprompt},
                         {"role": "user", "content": userprompt}
                     ]
+
         elif userprompt:
             messages=[
                         {"role": "user", "content": userprompt}
@@ -877,21 +876,39 @@ class GeonavAgent(Agent):
             self.sys_prompt = self.prompts["goal_description_loc"]
     
     def execute_subtask(self, task, geoinstruct, img_64):
+        """执行子任务"""
         if task['strategy'] == 'Navigate':
-            img = []#self.gen_map(query_type='landmark')
+            img = self.gen_map(query_type='landmark')
             text_prompt = self.prompts['landmark_navigate'].format(geoinstruct=geoinstruct, goal=task['goal'], state=task['desired_state'])
         elif task['strategy'] == 'Search':
-            img = [self.gen_map(query_type='semantic')]
+            img = self.gen_map(query_type='semantic')
             text_prompt = self.prompts['object_search'].format(geoinstruct=geoinstruct, goal=task['goal'], state=task['desired_state'])
         elif task['strategy'] == 'Locate':
-            img = [img_64]
+            img = img_64
             text_prompt = self.prompts['object_locate'].format(pos=self.controller.pose.xy, area=self.xyxy, goal=self.episode.target_description)
-            operation_chain = self.generate_operation_chain(task['goal']+'. ' +task['desired_state'])
-            target_nodes = self.recursive_query(operation_chain)
+            
+            # 判断目标描述是否复杂（包含多个物体或者关系）
+            is_complex = self.is_complex_query(task['goal'])
+            
+            if is_complex:
+                # 对于复杂查询，首先尝试使用complex_query_scene_graph
+                print(f"执行复杂查询：{task['goal']}")
+                target_nodes = self.controller.complex_query_scene_graph(task['goal'], debug=True)
+                
+                # 如果complex_query_scene_graph没有返回结果，尝试使用多步骤操作链
+                if not target_nodes:
+                    print("复杂查询未返回结果，尝试使用多步骤操作链")
+                    operation_chains = self.generate_operation_chain(task['goal'])
+                    target_nodes = self.recursive_query(operation_chains, max_depth=5, current_depth=0)
+            else:
+                # 对于简单查询，使用原有方式但带增强的robust_subgraph_query
+                operation_chain = self.generate_operation_chain(task['goal'])
+                target_nodes = self.recursive_query(operation_chain, max_depth=5, current_depth=0)
+            
             if target_nodes:
-                selected_node = target_nodes[0]
+                # 选择最高置信度的节点
+                selected_node = max(target_nodes, key=lambda n: getattr(n, 'confidence', 0) if hasattr(n, 'confidence') else 0)
                 next_pos = (selected_node.position.x, selected_node.position.y)
-                print('---use graph memory---')
                 return next_pos
 
         max_retries = 3
@@ -899,7 +916,8 @@ class GeonavAgent(Agent):
         while retry_count < max_retries:
             enhanced_prompt = f"{text_prompt}\n\nPlease strictly follow the requirements below when responding:\n1. Use standard JSON format\n2. Include all required fields\n3. Wrap the response with ```json"
             try:
-                self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=img)
+                self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=[img])
+                # self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=[img])
                 target_json = extract_json_from_msg(self.action)
                 if target_json is not None:
                     break
@@ -914,30 +932,163 @@ class GeonavAgent(Agent):
         return next_pos
 
     def generate_operation_chain(self, goal_description):
-        # 使用LLM API生成操作链
-        operation_chain = None
-        while not operation_chain:
-            prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
-            response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
-            operation_chain = extract_json_from_msg(response)
+        """生成操作链"""
+        # 判断指令是否为复杂查询
+        is_complex = self.is_complex_query(goal_description)
+        
+        if is_complex:
+            return self.generate_complex_operation_chain(goal_description)
+        
+        # 使用常规方式生成操作链
+        prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        operation_chain = extract_json_from_msg(response)
         return operation_chain
+    
+    def is_complex_query(self, query):
+        """判断查询是否为复杂查询"""
+        # 包含多个句子
+        if '.' in query and query.count('.') > 1:
+            return True
+        
+        # 包含多个关系词
+        relation_keywords = ['in front of', 'behind', 'next to', 'beside', 'between', 
+                            'across from', 'opposite', 'facing', 'same direction',
+                            'opposite direction', 'parked', 'facing']
+        relation_count = sum(keyword in query.lower() for keyword in relation_keywords)
+        if relation_count >= 2:
+            return True
+        
+        # 包含多个连接词
+        if query.lower().count(' and ') > 1 or query.lower().count(',') > 1:
+            return True
+        
+        return False
+    
+    def generate_complex_operation_chain(self, goal_description):
+        """为复杂查询生成更适合的操作链"""
+        # 创建提示词，要求LLM将复杂查询分解为多个步骤
+        prompt = f"""
+        将以下复杂指令分解为多个步骤，每个步骤使用一个单独的操作链：
+        
+        指令: "{goal_description}"
+        
+        各步骤应该是有顺序、循序渐进的。例如，对于指令"在Davey Road上停着一辆白色汽车，它前面有一辆灰色汽车面向相反方向"，可分解为：
+        
+        步骤1: 找到Davey Road上的白色汽车
+        操作链: [
+            {{"method": "get_geonode_by_name", "args": ["Davey Road"]}},
+            {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
+            {{"method": "filter_by_class", "args": ["vehicle"]}},
+            {{"method": "filter_by_attribute", "kwargs": {{"color": "white"}}}}
+        ]
+        
+        步骤2: 在步骤1结果的基础上，找出前面的灰色汽车
+        操作链: [
+            {{"method": "get_child_nodes", "kwargs": {{"relation_type": "north_of"}}}},
+            {{"method": "filter_by_class", "args": ["vehicle"]}},
+            {{"method": "filter_by_attribute", "kwargs": {{"color": "gray"}}}}
+        ]
+        
+        请按照上面的格式，为给定指令生成多步骤的操作链。
+        输出格式必须为有效的JSON格式，请确保每个操作链都被正确包裹在方括号内，且使用正确的JSON语法。
+        """
+        
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        
+        # 改进的JSON提取方法
+        try:
+            # 首先尝试从响应中提取所有JSON代码块
+            import re
+            # 更精确的JSON匹配模式，确保捕获完整的JSON数组
+            json_pattern = r'\[\s*{\s*"method"\s*:.*?}\s*\]'
+            json_blocks = re.findall(json_pattern, response, re.DOTALL)
+            
+            if json_blocks:
+                # 尝试解析每个代码块为JSON
+                operation_chains = []
+                for block in json_blocks:
+                    try:
+                        import json
+                        chain = json.loads(block)
+                        if isinstance(chain, list) and len(chain) > 0:
+                            # 验证每个操作是否有有效的method
+                            valid_chain = True
+                            for op in chain:
+                                if not isinstance(op, dict) or 'method' not in op:
+                                    valid_chain = False
+                                    break
+                            if valid_chain:
+                                operation_chains.append(chain)
+                    except json.JSONDecodeError as e:
+                        print(f"JSON解析错误: {e} in block: {block[:50]}...")
+                        continue
+                
+                if operation_chains:
+                    print(f"成功分解为{len(operation_chains)}个操作链")
+                    return operation_chains
+                
+            # 如果上面的方法失败，尝试使用LLM直接输出JSON格式
+            print("尝试使用LLM直接输出JSON格式")
+            enhanced_prompt = f"""
+            请将以下复杂指令分解为多个步骤的操作链，并以有效的JSON数组格式输出：
+            
+            指令: "{goal_description}"
+            
+            请确保输出格式为有效的JSON数组，包含多个操作链，例如:
+            [
+                [
+                    {{"method": "get_geonode_by_name", "args": ["Davey Road"]}},
+                    {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
+                    {{"method": "filter_by_class", "args": ["vehicle"]}}
+                ],
+                [
+                    {{"method": "get_child_nodes", "kwargs": {{"relation_type": "north_of"}}}},
+                    {{"method": "filter_by_class", "args": ["vehicle"]}}
+                ]
+            ]
+            
+            请直接返回上述格式的JSON数组，不要包含任何其他文本。
+            """
+            
+            response = self.call_response(sysprompt=None, userprompt=enhanced_prompt, image_list=[])
+            try:
+                # 清理响应，只保留可能的JSON部分
+                cleaned_response = re.search(r'\[\s*\[.*\]\s*\]', response, re.DOTALL)
+                if cleaned_response:
+                    operation_chains = json.loads(cleaned_response.group(0))
+                    if isinstance(operation_chains, list) and len(operation_chains) > 0:
+                        print(f"第二次尝试成功分解为{len(operation_chains)}个操作链")
+                        return operation_chains
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"分解复杂查询时出错: {str(e)}")
+        
+        # 如果无法分解，回退到常规方式
+        print("无法分解复杂查询，使用常规方式")
+        prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
+        operation_chain = extract_json_from_msg(response)
+        return [operation_chain] if operation_chain else []
 
     def check_subgoals(self, task):
         if task['strategy'] == 'Navigate':
             if self.controller.timestep > 6: #防止陷入NotFound
-                self.strategy_distances['Navigate'] = self.controller.pose.xy.dist_to(self.target.xy)
+                self.strategy_distances['Navigate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
                 return True
             # check if any landmarks are reached
-            return all(lm.position.xy.dist_to(self.controller.pose.xy) < 50.0 for lm in self.landmark_nav_map.landmark_map.landmarks)
+            return all(lm.position.xy.dist_to(self.controller.pose.xy) < 40.0 for lm in self.landmark_nav_map.landmark_map.landmarks)
         elif task['strategy'] == 'Search':
-            if self.controller.timestep > 15: #防止陷入search around
-                self.strategy_distances['Search'] = self.controller.pose.xy.dist_to(self.target.xy)
+            if self.controller.timestep > 11: #防止陷入search around
+                self.strategy_distances['Search'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
                 return True
             # evaluate whether the information has changed
             sem_map = self.landmark_nav_map.get_semantic_map()
             
             if not hasattr(self, 'exploration_analyzer'):
-                self.exploration_analyzer = ExplorationAnalyzer(threshold=1e-6)
+                self.exploration_analyzer = ExplorationAnalyzer(threshold=1e-8)
             # 与上一帧比较
             if self.exploration_analyzer.should_continue(sem_map, self.previous_sem_map):
                 self.previous_sem_map = sem_map.copy()
@@ -946,14 +1097,14 @@ class GeonavAgent(Agent):
             # 利用知识推断目标名称，飞到对应位置
             # 假如没找到目标，还要继续
             return True
-        return True
+        return False
 
     def run(self):
         Success = False
         strategy = ''
         pos_log = []
         image_list = []
-        self.strategy_distances['Start'] = self.controller.pose.xy.dist_to(self.target.xy)
+        self.strategy_distances['Start'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
         # 添加终止条件变量
         while self.controller.timestep < self.args.eval_max_timestep:
             rgb, _ = self.controller.perceive(self.controller.pose, self.episode.map_name)
@@ -992,7 +1143,7 @@ class GeonavAgent(Agent):
                     self.landmark_nav_map.surroundings_map.obj_list, 
                     show=False
                 )
-
+            
             # Step 1: system Prompt
             geoinstruct = self.prompts["landmark_prompt"].format(landmark=landmark, recent_objects='', surroundings='')
             self.view_width = 2 * (self.controller.pose.z-self.landmark_nav_map.ground_level)
@@ -1028,15 +1179,15 @@ class GeonavAgent(Agent):
                 # 检查是否所有任务完成
                 if self.current_task_index >= len(self.plan['sub_goals']):
                     print("All sub-tasks completed!")
-                    self.strategy_distances['Locate'] = self.controller.pose.xy.dist_to(self.target.xy)
+                    self.strategy_distances['Locate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
                     break  # 提前退出循环
             self.results["steps"].append({
                 "time_step": self.controller.timestep,
                 "pose": (self.controller.pose.x, self.controller.pose.y, self.controller.pose.z, self.controller.pose.yaw),
                 "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
                 "plan": current_task,
-                "observation":self.observation,
-                "action": self.action
+                "observation_suggestion":self.observation,
+                "action_suggestion": self.action
             })
             # 记录当前位置
             pos_log.append(self.controller.pose)
@@ -1046,6 +1197,7 @@ class GeonavAgent(Agent):
 
 
     def save_results(self, success):
+        # 生成唯一的文件名，包含set_height信息
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"GeonavAgent_{self.episode.id}_{timestamp}.json"
         filepath = os.path.join(self.save_path, filename)# self.save_path
@@ -1062,11 +1214,30 @@ class GeonavAgent(Agent):
 
         print(f"Results saved to {filepath}")
 
-    def recursive_query(self, operation_chain):
+    def recursive_query(self, operation_chain, max_depth=5, current_depth=0):
         """递归查询以获取与任务相关的子图"""
+        # 检查递归深度
+        if current_depth >= max_depth:
+            print(f"达到最大递归深度 {max_depth}，停止继续递归")
+            return []
+        
+        # 检查operation_chain是否为空
+        if not operation_chain:
+            print("操作链为空，无法执行查询")
+            return []
+        
+        # 检查是否为多个操作链的情况
+        if isinstance(operation_chain, list) and len(operation_chain) > 0 and isinstance(operation_chain[0], list):
+            print(f"检测到多步骤操作链({len(operation_chain)}个步骤)")
+            return self.recursive_multi_step_query(operation_chain, max_depth, current_depth)
+        
         try:
             # 验证操作链中的关系类型
             for op in operation_chain:
+                if not isinstance(op, dict):
+                    print(f"警告: 操作链中存在非字典对象: {op}")
+                    continue
+                    
                 if op['method'] == 'get_child_nodes' and 'kwargs' in op and 'relation_type' in op['kwargs']:
                     relation_type = op['kwargs']['relation_type']
                     valid_relations = [
@@ -1077,7 +1248,15 @@ class GeonavAgent(Agent):
                     if relation_type not in valid_relations:
                         print(f"Warning: Invalid relation type '{relation_type}'. Using 'contains' instead.")
                         op['kwargs']['relation_type'] = "contains"
-            current_nodes = self.controller.query_engine.subgraph_query(operation_chain)
+            
+            # 使用增强版的robust_subgraph_query替代原始的subgraph_query
+            current_nodes = self.controller.query_engine.robust_subgraph_query(
+                operation_chain, 
+                fallback=True,  # 启用回退机制
+                min_results=1,  # 最小结果数量
+                debug=True      # 打印调试信息
+            )
+            
             if not current_nodes:
                 print("No nodes found with the current operation chain.")
                 return None
@@ -1086,24 +1265,159 @@ class GeonavAgent(Agent):
             print(f"Found {len(current_nodes)} nodes:")
             for node in current_nodes:
                 print(f"  - {node.id} ({node.type})")
-
-            continue_query = self.ask_llm_to_continue(current_nodes)
-            if continue_query:
-                new_operation_chain = self.generate_operation_chain_from_nodes(current_nodes)
-                return self.recursive_query(new_operation_chain)
-            else:
-                return current_nodes
+            
+            # if len(current_nodes) > 1:
+            #     print(f"找到多个节点({len(current_nodes)})，需要进一步筛选")
+            #     # 使用LLM询问答案
+            #     continue_query = self.ask_llm_to_continue(current_nodes)
+            #     return continue_query
+            # else:
+            return current_nodes
         except Exception as e:
             print(f"Error in recursive_query: {e}")
             # 返回一个默认节点或者None
             return None
-
+            
+    def recursive_multi_step_query(self, operation_chains, max_depth=5, current_depth=0):
+        """处理多步骤操作链的递归查询"""
+        # 检查递归深度
+        if current_depth >= max_depth:
+            print(f"多步骤查询达到最大递归深度 {max_depth}，停止继续递归")
+            return []
+            
+        current_nodes = None
+        all_nodes = []
+        
+        for i, chain in enumerate(operation_chains):
+            try:
+                print(f"执行步骤 {i+1}/{len(operation_chains)}")
+                
+                # 如果是后续步骤，且需要使用前一步骤的结果
+                if i > 0 and current_nodes and len(current_nodes) > 0:
+                    # 检查是否第一个操作是get_child_nodes，如果是，则使用当前节点集合
+                    if len(chain) > 0 and chain[0]['method'] == 'get_child_nodes':
+                        # 此处使用前一步骤的结果作为父节点
+                        print(f"使用前一步骤的结果({len(current_nodes)}个节点)作为父节点")
+                        
+                        # 创建临时查询引擎
+                        temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
+                            chain,
+                            fallback=True,
+                            min_results=1,
+                            debug=True
+                        )
+                        
+                        if temp_current_nodes:
+                            current_nodes = temp_current_nodes
+                            all_nodes.extend(current_nodes)
+                            print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                        else:
+                            print(f"步骤 {i+1} 没有找到节点")
+                    else:
+                        # 如果第一个操作不是get_child_nodes，则单独执行此链
+                        temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
+                            chain,
+                            fallback=True,
+                            min_results=1,
+                            debug=True
+                        )
+                        
+                        if temp_current_nodes:
+                            current_nodes = temp_current_nodes
+                            all_nodes.extend(current_nodes)
+                            print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                        else:
+                            print(f"步骤 {i+1} 没有找到节点")
+                else:
+                    # 对于第一个步骤，或者前面步骤没有结果的情况
+                    temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
+                        chain,
+                        fallback=True,
+                        min_results=1,
+                        debug=True
+                    )
+                    
+                    if temp_current_nodes:
+                        current_nodes = temp_current_nodes
+                        all_nodes.extend(current_nodes)
+                        print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                    else:
+                        print(f"步骤 {i+1} 没有找到节点")
+                
+            except Exception as e:
+                print(f"步骤 {i+1} 执行错误: {str(e)}")
+                continue
+        
+        # 如果有多个步骤的结果，使用LLM筛选最符合原始查询的结果
+        if len(all_nodes) > 0:
+            if len(all_nodes) > len(current_nodes or []):
+                print(f"多步骤查询找到 {len(all_nodes)} 个总节点，最后一步有 {len(current_nodes or [])} 个节点")
+                # 可以选择返回all_nodes或current_nodes
+                # 这里选择返回最后一步的结果
+                return current_nodes
+            else:
+                return current_nodes
+        else:
+            print("所有步骤均未找到节点")
+            return None
+    
     def ask_llm_to_continue(self, nodes):
-        """询问 LLM 是否继续查询"""
-        node_descriptions = [f"Node {n.id} of type {n.type}" for n in nodes]
-        prompt = f"Current nodes: {', '.join(node_descriptions)}. Should we continue querying? Answer 'yes' or 'no'."
-        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
-        return 'yes' in response.lower()
+        node_descriptions = []
+        for node in nodes:
+            desc = {
+                "id": node.id,
+                "type": node.type.upper(),
+                "class": getattr(node, 'obj_class', 'N/A'),
+                "position": (round(node.position.x,1), round(node.position.y,1)),
+                "confidence": getattr(node, 'confidence', 1.0),
+                "is_target": getattr(node, 'target', False),
+                "attributes": {k:v for k,v in vars(node).items() 
+                            if k not in ['id','type','position','confidence','target']}
+            }
+            node_descriptions.append(json.dumps(desc, ensure_ascii=False))
+        # 构建边关系描述
+        edge_descriptions = []
+        for node in nodes:
+            for edge in self.controller.query_engine.graph.digraph_nx.out_edges(node.id, data=True):
+                edge_info = {
+                    "source": edge[0],
+                    "target": edge[1],
+                    "relation": edge[2].get('relation_type', 'unknown'),
+                    "attributes": {k:v for k,v in edge[2].items() if k != 'relation_type'}
+                }
+                edge_descriptions.append(json.dumps(edge_info, ensure_ascii=False))
+        # 构建提示
+        newline = '\n'
+        prompt = f"""
+        ## task
+        We're looking for a target: {self.episode.target_description}
+
+        ## Current Scene graph
+        ### Current nodes:
+        {newline.join(node_descriptions[:5])}{'...' if len(nodes) > 5 else ''}
+
+        ### Current edges:
+        {newline.join(edge_descriptions[:5])}{'...' if len(edge_descriptions) > 5 else ''}
+        Which node is the closest to the target? 
+        Please output the node id in a formatted JSON object with key "node_id". 
+        For example:
+        {{
+            "node_id": "vehicle_1"
+        }}
+        Make sure the node_id format is correct.
+        """
+        response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[]).strip()
+        try:
+            output_json = json.loads(response)
+            node_id = output_json.get("node_id")
+            for node in nodes:
+                if node.id == node_id:
+                    # 如果找到匹配的节点，返回该节点
+                    return node
+        except json.JSONDecodeError:
+            # 如果解析失败，返回nodes[0]作为默认值
+            return None
+
 
     def generate_operation_chain_from_nodes(self, nodes):
         """根据当前节点生成新的操作链"""
@@ -1112,7 +1426,18 @@ class GeonavAgent(Agent):
         node_text = ", ".join(node_descriptions)
         
         # 生成提示
-        prompt = QUERY_OPERATION_PROMPT.format(node_text=node_text)
+        prompt = f"""
+        Based on the current nodes: {node_text}
+
+        Generate a new operation chain to further refine the search for the target object.
+        Available operations:
+        - get_child_nodes(parent, relation_type): Gets the child node with the specified relationship to the parent node.
+        可用的关系类型有: "contains", "adjacent_to", "near_corner", "north_of", "south_of", "east_of", "west_of", "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+        - filter_by_class(obj_class): Filter object nodes by class.
+        - filter_by_attribute(key, value): Filter object nodes by attribute.
+
+        Return the operation chain in JSON format.
+        """
         
         # 调用LLM生成新的操作链
         response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
@@ -1123,3 +1448,4 @@ class GeonavAgent(Agent):
             return []
         
         return operation_chain
+

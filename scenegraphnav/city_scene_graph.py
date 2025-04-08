@@ -1,4 +1,4 @@
-import time
+from utils.tools import get_direction
 import math
 import networkx as nx
 from collections import defaultdict
@@ -159,11 +159,9 @@ class KnowledgeGraph:
 
 # ================== 查询引擎 ==================
 class QueryEngine:
-    
     def __init__(self, graph: KnowledgeGraph):
+        
         self.graph = graph
-        self.DIRECTION_NAMES = ["East", "Northeast", "North", "Northwest", "West", "Southwest", "South", "Southeast"]
-    
     def get_context(self, position: Point2D, radius=10.0):
         nodes = self.graph.spatial_index.query_radius(position, radius)
         return [self._describe_node(n, position) for n in nodes]
@@ -172,7 +170,7 @@ class QueryEngine:
         desc = {
             'type': node.type,
             'distance': f"{self._calc_distance(node.position, query_pos):.1f} meters",
-            'direction': self._get_direction(query_pos, node.position)
+            'direction': get_direction(query_pos, node.position)
         }
         if isinstance(node, GeoNode):
             desc['name'] = node.name
@@ -241,7 +239,7 @@ class QueryEngine:
                     current_nodes = func(*args, candidates=current_nodes)
             elif method_name in ['filter_by_class', 'filter_by_attribute']:
                 # 确保 current_nodes 不为 None
-                if current_nodes is None or current_nodes == []:
+                if current_nodes is None:
                     current_nodes = list(self.graph.nodes.values())
                 current_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
             else:
@@ -251,12 +249,202 @@ class QueryEngine:
             if not current_nodes:
                 break
         return current_nodes
-    def get_geonode_by_name(self, name_pattern: str):
-        """名称匹配地理节点"""
-        nodes = self.graph.nodes.values()
-        return [n for n in nodes if isinstance(n, GeoNode) 
-               and name_pattern.lower() in n.name.lower()]
-    def get_child_nodes(self, parent_node, relation_type: str):
+    
+    def robust_subgraph_query(self, operation_chain: list, fallback=True, min_results=1, debug=False):
+        """增强版链式查询框架，具有容错和回退机制
+        
+        Args:
+            operation_chain: 查询操作链
+            fallback: 是否启用回退机制
+            min_results: 最小结果数量，少于此数量将触发回退
+            debug: 是否输出调试信息
+            
+        Returns:
+            查询结果节点列表
+        """
+        if not operation_chain:
+            return []
+            
+        current_nodes = None
+        all_results = []  # 存储每步查询的结果
+        fallback_modes = []  # 存储每步是否使用了回退模式
+        
+        for i, op in enumerate(operation_chain):
+            method_name = op['method']
+            step_name = f"步骤{i+1}: {method_name}"
+            
+            try:
+                # 尝试获取方法
+                if not hasattr(self, method_name):
+                    if debug:
+                        print(f"警告: 方法 '{method_name}' 不存在，跳过此步骤")
+                    fallback_modes.append(True)
+                    continue
+                    
+                func = getattr(self, method_name)
+                
+                # 执行查询，根据方法类型调整参数
+                fallback_step = False
+                
+                if method_name == 'get_child_nodes':
+                    if current_nodes is None or len(current_nodes) == 0:
+                        if not fallback:
+                            if debug:
+                                print(f"{step_name}: 没有可用的父节点，无法继续查询")
+                            break
+                        else:
+                            # 回退：获取所有地理节点
+                            if debug:
+                                print(f"{step_name}: 没有可用的父节点，回退到所有地理节点")
+                            current_nodes = [n for n in self.graph.nodes.values() if isinstance(n, GeoNode)]
+                            fallback_step = True
+                    
+                    if not fallback_step:
+                        # 使用第一个节点作为父节点
+                        parent_node = current_nodes[0]
+                        temp_nodes = func(parent_node, **op.get('kwargs', {}), candidates=current_nodes)
+                        
+                        # 检查结果是否为空
+                        if not temp_nodes or len(temp_nodes) < min_results:
+                            if fallback and i > 0:
+                                if debug:
+                                    print(f"{step_name}: 结果数量不足({len(temp_nodes) if temp_nodes else 0})，维持当前结果")
+                                fallback_step = True
+                            else:
+                                current_nodes = temp_nodes
+                        else:
+                            current_nodes = temp_nodes
+                
+                elif method_name == 'get_geonode_by_name':
+                    args = op.get('args', [])
+                    if not args or (len(args) == 1 and not args[0]):
+                        # 如果没有提供名称模式，则返回所有地理节点
+                        current_nodes = [n for n in self.graph.nodes.values() if isinstance(n, GeoNode)]
+                    else:
+                        temp_nodes = func(*args, candidates=current_nodes)
+                        
+                        # 检查结果是否为空
+                        if not temp_nodes or len(temp_nodes) < min_results:
+                            if fallback:
+                                # 返回所有地理节点
+                                if debug:
+                                    print(f"{step_name}: 没有找到匹配的地理节点，回退到所有地理节点")
+                                current_nodes = [n for n in self.graph.nodes.values() if isinstance(n, GeoNode)]
+                                fallback_step = True
+                            else:
+                                current_nodes = temp_nodes
+                        else:
+                            current_nodes = temp_nodes
+                
+                elif method_name in ['filter_by_class', 'filter_by_attribute']:
+                    # 确保 current_nodes 不为 None
+                    if current_nodes is None:
+                        current_nodes = list(self.graph.nodes.values())
+                    
+                    temp_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
+                    
+                    # 检查结果是否为空
+                    if not temp_nodes or len(temp_nodes) < min_results:
+                        if fallback:
+                            if debug:
+                                print(f"{step_name}: 过滤后结果为空或不足，维持当前结果")
+                            # 保持当前结果不变
+                            fallback_step = True
+                        else:
+                            current_nodes = temp_nodes
+                    else:
+                        current_nodes = temp_nodes
+                
+                else:
+                    # 其他方法
+                    temp_nodes = func(*op.get('args', []), **op.get('kwargs', {}), candidates=current_nodes)
+                    
+                    # 检查结果是否为空
+                    if not temp_nodes or len(temp_nodes) < min_results:
+                        if fallback and i > 0:
+                            if debug:
+                                print(f"{step_name}: 结果为空或不足，维持当前结果")
+                            # 保持当前结果不变
+                            fallback_step = True
+                        else:
+                            current_nodes = temp_nodes
+                    else:
+                        current_nodes = temp_nodes
+                
+                # 保存当前步骤的结果状态
+                all_results.append(current_nodes)
+                fallback_modes.append(fallback_step)
+                
+                if debug:
+                    print(f"{step_name}: 找到 {len(current_nodes) if current_nodes else 0} 个结果节点" +
+                         (f" (回退模式)" if fallback_step else ""))
+            
+            except Exception as e:
+                if debug:
+                    print(f"{step_name}: 发生错误 - {str(e)}")
+                
+                if fallback:
+                    # 错误发生时，保持当前结果不变
+                    if i > 0 and all_results:
+                        if debug:
+                            print(f"{step_name}: 发生错误，维持前一步结果")
+                        fallback_step = True
+                    else:
+                        # 如果是第一步，或者没有前一步结果，使用所有节点
+                        if debug:
+                            print(f"{step_name}: 发生错误，使用所有节点")
+                        current_nodes = list(self.graph.nodes.values())
+                        fallback_step = True
+                    
+                    fallback_modes.append(fallback_step)
+                    all_results.append(current_nodes)
+                else:
+                    # 不使用回退机制，直接中断查询
+                    break
+        
+        # 查询完成后，如果结果为空且允许回退
+        if (not current_nodes or len(current_nodes) < min_results) and fallback and all_results:
+            # 找到最后一个非回退步骤的结果
+            for i in range(len(all_results)-1, -1, -1):
+                if not fallback_modes[i] and all_results[i] and len(all_results[i]) >= min_results:
+                    current_nodes = all_results[i]
+                    if debug:
+                        print(f"最终结果为空或不足，回退到步骤{i+1}的结果，共{len(current_nodes)}个节点")
+                    break
+        
+        if debug:
+            print(f"查询完成，返回 {len(current_nodes) if current_nodes else 0} 个结果节点")
+        
+        return current_nodes or []
+
+    # def get_geonode_by_name(self, name_pattern: str, candidates=None):
+    #     """名称匹配地理节点"""
+    #     nodes = candidates if candidates else self.graph.nodes.values()
+    #     return [n for n in nodes if isinstance(n, GeoNode) 
+    #            and name_pattern.lower() in n.name.lower()]
+    def get_geonode_by_name(self, name_pattern: str, candidates=None, threshold=0.6):
+        """模糊名称匹配地理节点"""
+        from difflib import SequenceMatcher
+        
+        def similarity(a, b):
+            return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+        
+        nodes = candidates if candidates else self.graph.nodes.values()
+        results = []
+        
+        for n in nodes:
+            if isinstance(n, GeoNode):
+                if name_pattern.lower() in n.name.lower():  # 精确包含匹配
+                    results.append((n, 1.0))
+                else:  # 模糊匹配
+                    sim = similarity(name_pattern, n.name)
+                    if sim >= threshold:
+                        results.append((n, sim))
+        
+        # 按相似度排序
+        results.sort(key=lambda x: x[1], reverse=True)
+        return [n for n, _ in results]
+    def get_child_nodes(self, parent_node, relation_type: str, candidates=None):
         """获取指定关系的子节点"""
         # 验证关系类型是否有效
         valid_relations = [
@@ -271,50 +459,84 @@ class QueryEngine:
         
         children = []
         for edge in self.graph.digraph_nx.out_edges(parent_node.id, data=True):
-            if edge[2]['relation_type'] == relation_type:
-                child = self.graph.nodes[edge[1]]
-                children.append(child)
+            child = self.graph.nodes[edge[1]]
+            children.append(child)
+            # if edge[2]['relation_type'] == relation_type:
+            #     child = self.graph.nodes[edge[1]]
+            #     children.append(child)
         return children
     def filter_by_class(self, obj_class: str, candidates):
         """按类别过滤物体节点""" 
         return [n for n in candidates if isinstance(n, ObjectNode) 
                and n.obj_class == obj_class]
-    def filter_by_attribute(self, key: str, value: str, candidates):
-        """按属性过滤物体节点"""
-        return [n for n in candidates if isinstance(n, ObjectNode) 
-               and hasattr(n, key) and getattr(n, key) == value]
-    def multi_hop_search(self, start_node, target_relation: str, target_class: str, max_hops: int = 10):
-        """多跳搜索以找到符合条件的节点"""
-        from collections import deque
+    # def filter_by_attribute(self, key: str, value: str, candidates):
+    #     """按属性过滤物体节点"""
+    #     return [n for n in candidates if isinstance(n, ObjectNode) 
+    #            and hasattr(n, key) and getattr(n, key) == value]
+    def filter_by_attribute(self, key: str, value: str, candidates, threshold=0.7):
+        """模糊属性匹配"""
+        from difflib import SequenceMatcher
         
-        queue = deque([(start_node, 0)])  # (current_node, current_hop_count)
-        visited = set()
+        def similarity(a, b):
+            return SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
         
-        while queue:
-            current_node, current_hop_count = queue.popleft()
-            
-            if current_hop_count > max_hops:
-                break
-            
-            for edge in self.graph.digraph_nx.out_edges(current_node.id, data=True):
-                if edge[2]['relation_type'] == target_relation:
-                    child = self.graph.nodes[edge[1]]
-                    if isinstance(child, ObjectNode) and child.obj_class == target_class:
-                        return child
-                    if child not in visited:
-                        visited.add(child)
-                        queue.append((child, current_hop_count + 1))
+        results = []
+        for n in candidates:
+            if isinstance(n, ObjectNode):
+                if hasattr(n, key):
+                    attr_value = getattr(n, key)
+                    # 精确匹配
+                    if str(attr_value).lower() == str(value).lower():
+                        results.append((n, 1.0))
+                    # 模糊匹配
+                    else:
+                        sim = similarity(attr_value, value)
+                        if sim >= threshold:
+                            results.append((n, sim))
         
-        return None  # 如果没有找到符合条件的节点
+        # 按相似度排序
+        results.sort(key=lambda x: x[1], reverse=True)
+        return [n for n, _ in results]
+    def filter_by_relative_position(self, reference_node, direction: str, distance: float, candidates=None):
+        """根据相对位置过滤节点"""
+        if candidates is None:
+            candidates = list(self.graph.nodes.values())
+        
+        filtered = []
+        for node in candidates:
+            if isinstance(node, ObjectNode):
+                dx = node.position.x - reference_node.position.x
+                dy = node.position.y - reference_node.position.y
+                dist = math.hypot(dx, dy)
+                
+                if dist <= distance:
+                    angle = math.degrees(math.atan2(dy, dx)) % 360
+                    if self._is_direction_match(angle, direction):
+                        filtered.append(node)
+        return filtered
+
+    def _is_direction_match(self, angle: float, direction: str) -> bool:
+        """判断角度是否匹配指定方向"""
+        direction_map = {
+            "north": (337.5, 22.5),
+            "northeast": (22.5, 67.5),
+            "east": (67.5, 112.5),
+            "southeast": (112.5, 157.5),
+            "south": (157.5, 202.5),
+            "southwest": (202.5, 247.5),
+            "west": (247.5, 292.5),
+            "northwest": (292.5, 337.5)
+        }
+        
+        if direction not in direction_map:
+            return False
+        
+        start, end = direction_map[direction]
+        return start <= angle < end
     @staticmethod
     def _calc_distance(p1: Point2D, p2: Point2D):
         return math.hypot(p1.x - p2.x, p1.y - p2.y)
     
-    def _get_direction(self, src: Point2D, target: Point2D):
-        dx = target.x - src.x
-        dy = target.y - src.y
-        angle = math.degrees(math.atan2(dy, dx)) % 360
-        return self.DIRECTION_NAMES[round(angle / 45) % 8]
     def is_within_geo_node(self, position: Point2D):
          point = Point(position.x, position.y)
          name_list = []
@@ -337,14 +559,14 @@ class QueryEngine:
                 
             # 基础信息计算
             distance = self._calc_distance(node.position, position)
-            direction = self._get_direction(position, node.position)
+            direction = get_direction(position, node.position)
             polygon = node.contour_polygon
             
             # 情形1：在轮廓多边形内部
             if polygon.contains(point):
                 # 计算相对于多边形中心的方位
                 centroid = polygon.centroid
-                intra_direction = self._get_direction(
+                intra_direction = get_direction(
                     Point2D(centroid.x, centroid.y), 
                     position
                 )
@@ -360,7 +582,7 @@ class QueryEngine:
                     closest_corner = Point2D(coord[0], coord[1])
                     
             if min_corner_dist < 5.0:  # 5米内视为接近角落
-                corner_dir = self._get_direction(closest_corner, position)
+                corner_dir = get_direction(closest_corner, position)
                 descriptions.append(
                     f"near {node.name}'s {corner_dir} corner "
                     f"({min_corner_dist:.1f}m)")

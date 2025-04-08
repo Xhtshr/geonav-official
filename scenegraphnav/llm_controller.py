@@ -1,13 +1,11 @@
 from openai import OpenAI
-from json import dumps as json_dumps  # 添加在文件顶部
-from scenegraphnav.parser import parse_args
+from utils.tools import get_direction
 
 from shapely.geometry import Point
 from gsamllavanav.dataset.episode import Episode
 from gsamllavanav.parser import ExperimentArgs
 from gsamllavanav.mapdata import MAP_BOUNDS
 from gsamllavanav.space import Point2D, Pose4D
-from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from gsamllavanav.teacher.trajectory import _moved_pose
 from gsamllavanav.observation import cropclient
 from scenegraphnav.city_scene_graph import GeoNode, ObjectNode, KnowledgeGraph, QueryEngine
@@ -192,14 +190,220 @@ class LLMController:
         self.intr_knowledge = extract_json_from_msg(response)
         return self.intr_knowledge
     
+    def query_scene_graph(self, instruction: str, debug=False):
+        """使用增强版的robust_subgraph_query查询场景图"""
+        from scenegraphnav.prompt.geonav import QUERY_OPERATION_CHAIN_PROMPT
+        import json
+        
+        # 使用LLM生成操作链
+        prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=instruction)
+        client = OpenAI(
+            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
+            base_url='https://api.chatanywhere.tech',
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a professional query planner."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        try:
+            operation_chain = json.loads(response.choices[0].message.content)
+            if debug:
+                print(f"生成的操作链: {json.dumps(operation_chain, indent=2, ensure_ascii=False)}")
+                
+            # 使用robust_subgraph_query执行查询
+            results = self.query_engine.robust_subgraph_query(
+                operation_chain, fallback=True, min_results=1, debug=debug
+            )
+            
+            return results
+        except Exception as e:
+            print(f"查询场景图时发生错误: {str(e)}")
+            return []
+    
+    def complex_query_scene_graph(self, instruction: str, debug=False):
+        """处理复杂查询，将其分解为多个子查询并验证结果之间的关系"""
+        # 分解复杂查询为多个子查询
+        sub_queries = self.decompose_complex_query(instruction, debug)
+        if not sub_queries:
+            # 如果无法分解，则使用普通查询
+            if debug:
+                print("无法分解查询，使用普通查询")
+            return self.query_scene_graph(instruction, debug)
+        
+        # 执行每个子查询
+        sub_results = []
+        for i, sub_query in enumerate(sub_queries):
+            if debug:
+                print(f"子查询 {i+1}: {sub_query}")
+            
+            # 执行子查询
+            results = self.query_scene_graph(sub_query, debug=debug)
+            sub_results.append((sub_query, results))
+            
+            if debug:
+                print(f"子查询 {i+1} 返回 {len(results)} 个结果")
+        
+        # 验证结果之间的关系
+        final_results = self.verify_relation_constraints(instruction, sub_results, debug)
+        
+        return final_results
+    
+    def decompose_complex_query(self, instruction: str, debug=False):
+        """将复杂查询分解为多个简单子查询"""
+        prompt = f"""
+        将以下复杂指令分解为多个简单查询步骤:
+        
+        指令: "{instruction}"
+        
+        每个步骤应关注一个具体物体及其特征。例如，指令"白色车前面有灰色车，后面是另一辆白色车"可以分解为:
+        1. 查找白色车
+        2. 查找灰色车在白色车前面
+        3. 查找另一辆白色车在第一辆白色车后面
+        
+        请输出分解后的简单查询列表，每个查询应该是完整的句子。
+        """
+        
+        client = OpenAI(
+            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
+            base_url='https://api.chatanywhere.tech',
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are a professional query analyzer."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        result = response.choices[0].message.content
+        
+        # 提取子查询列表
+        import re
+        sub_queries = []
+        
+        # 匹配格式为 "1. xxx" 或 "1) xxx" 或 "- xxx" 的文本行
+        pattern = r'(?:\d+[\.\)]\s+|\-\s+)(.+)'
+        matches = re.findall(pattern, result)
+        
+        if matches:
+            sub_queries = [match.strip() for match in matches if match.strip()]
+        
+        if debug:
+            print(f"分解查询结果: {sub_queries}")
+        
+        return sub_queries
+    
+    def verify_relation_constraints(self, original_instruction, sub_results, debug=False):
+        """验证多个查询结果之间的关系约束"""
+        if not sub_results or any(not results for _, results in sub_results):
+            if debug:
+                print("子查询结果为空，无法验证关系")
+            # 返回第一个非空结果，或空列表
+            for _, results in sub_results:
+                if results:
+                    return results
+            return []
+        
+        # 构建结果描述
+        results_desc = []
+        for i, (query, nodes) in enumerate(sub_results):
+            nodes_desc = []
+            for j, node in enumerate(nodes[:5]):  # 限制每个查询最多描述5个结果
+                node_desc = f"节点{j+1} (ID: {node.id}, "
+                if hasattr(node, 'obj_class'):
+                    node_desc += f"类型: {node.obj_class}, "
+                if hasattr(node, 'color'):
+                    node_desc += f"颜色: {node.color}, "
+                node_desc += f"位置: ({node.position.x:.1f}, {node.position.y:.1f}))"
+                nodes_desc.append(node_desc)
+            
+            results_desc.append(f"查询 {i+1}: {query}\n结果: {'; '.join(nodes_desc)}")
+        
+        joined_results = "\n\n".join(results_desc)
+        prompt = f"""
+        分析以下多个查询结果，确定哪些对象组合最符合原始指令要求。
+
+        原始指令: "{original_instruction}"
+
+        查询结果:
+        {joined_results}
+
+        请确定哪些对象组合最可能满足原始指令的所有关系约束，并给出理由。
+        返回JSON格式:
+        {{
+            "best_match": [
+                {{"query_index": 查询索引, "node_index": 节点索引}},
+                ...
+            ],
+            "reason": "选择理由"
+        }}
+
+        如果没有完全符合的组合，返回最接近的组合。
+        """
+        
+        client = OpenAI(
+            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
+            base_url='https://api.chatanywhere.tech',
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-4-turbo",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "You are a professional spatial relation analyzer."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        try:
+            result = json.loads(response.choices[0].message.content)
+            
+            if debug:
+                print(f"关系验证结果: {json.dumps(result, indent=2, ensure_ascii=False)}")
+            
+            if 'best_match' in result and result['best_match']:
+                # 提取最佳匹配节点
+                best_nodes = []
+                for match in result['best_match']:
+                    query_idx = match.get('query_index')
+                    node_idx = match.get('node_index')
+                    
+                    if query_idx is not None and node_idx is not None:
+                        try:
+                            query_idx = int(query_idx) - 1  # 调整为0-索引
+                            node_idx = int(node_idx) - 1    # 调整为0-索引
+                            
+                            if 0 <= query_idx < len(sub_results):
+                                _, nodes = sub_results[query_idx]
+                                if 0 <= node_idx < len(nodes):
+                                    best_nodes.append(nodes[node_idx])
+                        except (ValueError, IndexError) as e:
+                            if debug:
+                                print(f"索引解析错误: {str(e)}")
+                
+                if best_nodes:
+                    if debug:
+                        print(f"找到 {len(best_nodes)} 个最佳匹配节点")
+                    return best_nodes
+        
+        except Exception as e:
+            if debug:
+                print(f"关系验证错误: {str(e)}")
+        
+        # 如果无法确定最佳组合，返回第一个查询的结果
+        if debug:
+            print("无法确定最佳组合，返回第一个查询的结果")
+        return sub_results[0][1] if sub_results else []
+    
     def _calc_distance(self, p1: Point2D, p2: Point2D):
         return math.hypot(p1.x - p2.x, p1.y - p2.y)
-    def _get_direction(self, src: Point2D, target: Point2D):
-        DIRECTION_NAMES = ["East", "Northeast", "North", "Northwest", "West", "Southwest", "South", "Southeast"]
-        dx = target.x - src.x
-        dy = target.y - src.y
-        angle = math.degrees(math.atan2(dy, dx)) % 360
-        return DIRECTION_NAMES[round(angle / 45) % 8]
     def _find_parent_geo(self, position: Point2D):
         """查找与当前坐标相关的地理父节点，考虑多种空间关系"""
         point = Point(position.x, position.y)
@@ -219,7 +423,7 @@ class LLMController:
                 return node, "contains"
             
             # 情形2：接近多边形边界（次高优先级）
-            if polygon.distance(point) < 10.0:  # 10米内视为接近边界
+            if polygon.distance(point) < 20.0:  # 10米内视为接近边界
                 candidates.append((node, "adjacent_to", distance))
                 continue
             
@@ -230,13 +434,13 @@ class LLMController:
                 if corner_dist < closest_corner_dist:
                     closest_corner_dist = corner_dist
                 
-            if closest_corner_dist < 15.0:  # 15米内视为接近角落
+            if closest_corner_dist < 35.0:  # 15米内视为接近角落
                 candidates.append((node, "near_corner", distance))
                 continue
             
             # 情形4：在一定距离内的普通关系
-            if distance < 50.0:  # 50米内视为相关
-                direction = self._get_direction(position, node.position)
+            if distance < 80.0:  # 50米内视为相关
+                direction = get_direction(position, node.position)
                 candidates.append((node, f"{direction.lower()}_of", distance))
         
         # 按距离排序，选择最近的候选节点

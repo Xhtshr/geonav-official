@@ -15,7 +15,7 @@ from gsamllavanav.models.goal_predictor import GoalPredictor
 from scenegraphnav.agent import GeonavAgent
 
 DEVICE = 'cuda'
-
+test_data = 'easy_simpled_1'
 args = parse_args()
 
 if args.mode == 'eval':
@@ -32,7 +32,7 @@ if args.mode == 'eval':
         # 测试整个split的所有样例
         test_episodes = generate_episodes_from_mturk_trajectories(
             objects,
-            load_mturk_trajectories(args.split, 'easy_simpled_0', args.altitude),
+            load_mturk_trajectories(args.split, test_data, args.altitude),
             max_episodes=None
         )
     # 选择规划器运动至 landmark质点位置
@@ -87,7 +87,9 @@ if args.mode == 'eval':
     LLM_backbone = 'Qwen-online' # language model
     vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
     ll_api_key = "sk-ca477c37e2214255a5498915ea609ae5"
-
+    # os.environ["OPENAI_API_KEY"] = "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020" # 3.5--1美元
+    # # 设置 OPENAI_BASE_URL 环境变量
+    # os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus/v1"
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
     strategy_distance_records = {
         'Start': [],
@@ -122,7 +124,7 @@ if args.mode == 'eval':
             print(f"No data available for {strategy}")
     noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
     alt_env = f"_{args.alt_env}" if args.alt_env else ""
-    with open(f'geonav_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
+    with open(f'geonav_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}_{test_data}.json', 'w') as f:
         json.dump({
             'metrics': metrics.to_dict(),
             'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},

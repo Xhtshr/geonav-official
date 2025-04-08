@@ -58,7 +58,7 @@ if args.mode == 'eval':
             elif VLM_backbone == 'GPT-4o':
                 vlmodel = OpenAI(
                     api_key=vl_api_key,
-                    base_url='https://api.chatanywhere.tech',
+                    base_url='https://xiaoai.plus',
                 )
             
             if LLM_backbone == 'Qwen-max':
@@ -82,7 +82,7 @@ if args.mode == 'eval':
         # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
         VLM_backbone = 'GPT-4o' # visual model
         LLM_backbone = 'Qwen-max' # language model
-        vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
+        vl_api_key =  "sk-Y1BeG9ve6rAfPumNR0AwtnClJ8yZz7c5KS2yjs5EgYI7o3DH"
         ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"
 
         vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
