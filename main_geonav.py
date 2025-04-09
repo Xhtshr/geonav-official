@@ -1,3 +1,4 @@
+import os
 import json
 import torch
 from openai import OpenAI
@@ -11,7 +12,6 @@ from gsamllavanav.dataset.generate import generate_episodes_from_mturk_trajector
 from gsamllavanav.dataset.mturk_trajectory import load_mturk_trajectories
 from gsamllavanav.goal_selection import goal_selection_gdino, goal_selection_llava
 from scenegraphnav.evaluate import run_episodes_batch
-from gsamllavanav.models.goal_predictor import GoalPredictor
 from scenegraphnav.agent import GeonavAgent
 
 DEVICE = 'cuda'
@@ -66,7 +66,7 @@ if args.mode == 'eval':
         elif VLM_backbone == 'GPT':
             vlmodel = OpenAI(
                 api_key=vl_api_key,
-                base_url='https://api.chatanywhere.tech'#'https://xiaoai.plus/v1',
+                base_url= 'https://xiaoai.plus' #'https://api.chatanywhere.tech',
             )
         
         if LLM_backbone == 'Qwen-online':
@@ -85,11 +85,11 @@ if args.mode == 'eval':
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'GPT' # visual model
     LLM_backbone = 'Qwen-online' # language model
-    vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
+    vl_api_key =  "sk-Y1BeG9ve6rAfPumNR0AwtnClJ8yZz7c5KS2yjs5EgYI7o3DH"
     ll_api_key = "sk-ca477c37e2214255a5498915ea609ae5"
-    # os.environ["OPENAI_API_KEY"] = "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020" # 3.5--1美元
+    os.environ["OPENAI_API_KEY"] = "sk-Y1BeG9ve6rAfPumNR0AwtnClJ8yZz7c5KS2yjs5EgYI7o3DH"
     # # 设置 OPENAI_BASE_URL 环境变量
-    # os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus/v1"
+    os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus"
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
     strategy_distance_records = {
         'Start': [],

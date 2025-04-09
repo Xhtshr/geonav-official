@@ -151,7 +151,6 @@ For "white car parked 1st from bottom in right column":
 
 Now analyze: {objects}
 """
-
 QUERY_OPERATION_CHAIN_PROMPT  = """
     Converts navigation commands into a chain of query operations. Available operations:
     - get_geonode_by_name(name_pattern): finds geonodes based on a name pattern. If no name is provided, all geonodes are returned.
@@ -166,14 +165,15 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
     3. For "stopping on the road", the "contains" relationship of the road object is usually used
     4. When describing the relative position of multiple objects, you need to find the relationship chain that connects these objects
     5. When multiple chains of operations represent relative relationships, make sure that the chains of operations are coherent
-
+    
+    **Strict output format requirements**: - MUST return a JSON array directly, do not wrap the operation chain with additional keys.
     Example instruction: "Locate the brown house"
     return operation chain:
     [
         {{"method": "get_geonode_by_name", "args": [""]}},  // returns all geographic nodes
         {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},  // find objects contained by geographic nodes
         {{"method": "filter_by_class", "args": ["building"]}},
-        {{"method": "filter_by_attribute", "kwargs": {{"color": "brown"}}}}
+        {{"method": "filter_by_attribute", "args": ["color", "brown"]}}
     ]
 
     Example instruction: "Find the red car near the main entrance of the shopping mall"
@@ -182,7 +182,7 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
         {{"method": "get_geonode_by_name", "args": ["shopping mall"]}},
         {{"method": "get_child_nodes", "kwargs": {{"relation_type": "adjacent_to"}}}},
         {{"method": "filter_by_class", "args": ["vehicle"]}},
-        {{"method": "filter_by_attribute", "kwargs": {{"color": "red"}}}}
+        {{"method": "filter_by_attribute", "args": ["color", "red"]}}
     ]
 
     Example instruction: "Find the car next to the park"
@@ -199,7 +199,7 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
         {{"method": "get_geonode_by_name", "args": ["Davey Road"]}},
         {{"method": "get_child_nodes", "kwargs": {{"relation_type": "contains"}}}},
         {{"method": "filter_by_class", "args": ["vehicle"]}},
-        {{"method": "filter_by_attribute", "kwargs": {{"color": "white"}}}}
+        {{"method": "filter_by_attribute", "args": ["color", "white"]}}
     ]
     
     Current instruction: {instruction}

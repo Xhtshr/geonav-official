@@ -270,8 +270,8 @@ class LLMController:
         """
         
         client = OpenAI(
-            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
-            base_url='https://api.chatanywhere.tech',
+            api_key= os.environ.get("OPENAI_API_KEY", 'sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr'),
+            base_url= os.environ.get("OPENAI_BASE_URL", 'https://api.chatanywhere.tech'),
         )
         
         response = client.chat.completions.create(

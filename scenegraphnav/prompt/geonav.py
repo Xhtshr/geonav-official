@@ -160,7 +160,8 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
     3. For "stopping on the road", the "contains" relationship of the road object is usually used
     4. When describing the relative position of multiple objects, you need to find the relationship chain that connects these objects
     5. When multiple chains of operations represent relative relationships, make sure that the chains of operations are coherent
-
+    
+    **Strict output format requirements**: - MUST return a JSON array directly, do not wrap the operation chain with additional keys.
     Example instruction: "Locate the brown house"
     return operation chain:
     [
