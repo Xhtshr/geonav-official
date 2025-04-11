@@ -224,7 +224,7 @@ class ChatAgent(Agent):
     def call_response(self, sysprompt, userprompt, image_64):
         if image_64 and sysprompt:
             rep = self.model.chat.completions.create(
-                    model="qwen-vl-max-latest",
+                    model="qwen-vl-max-2025-04-02",
                     messages=[
                         {"role": "system", "content": sysprompt},
                         {"role": "user", "content": [
@@ -245,7 +245,7 @@ class ChatAgent(Agent):
                 )
         elif userprompt:
             rep = self.model.chat.completions.create(
-                    model="qwen-vl-max-latest",
+                    model="qwen-vl-max-2025-04-02",
                     messages=[
                         {"role": "user", "content": userprompt}
                     ],
@@ -278,15 +278,20 @@ class ChatAgent(Agent):
                 # memory
                 self.controller.build_scene_nodes(detections, self.landmark_nav_map.landmark_map.landmarks)
             else:
-                _, landmark = self.controller.build_scene_nodes([], self.landmark_nav_map.landmark_map.landmarks, show=False)
+                landmark = ''
+                # _, landmark = self.controller.build_scene_nodes([], self.landmark_nav_map.landmark_map.landmarks, show=False)
+            
+            geo_info = ' at ' + str(self.controller.pose.xy)
+            for lm in self.landmark_nav_map.landmark_map.landmarks:
+                geo_info += '. '+ str(lm.name) + ' is located at '+str(lm.position) + '. Its contour is' + str(lm.contour)
             
             if isinstance(self.model, Qwen2VLForConditionalGeneration):
                 raise NotImplementedError
             elif isinstance(self.model, OpenAI):
                 # Step 1: system Prompt
                 if naive:
-                    landmark = ''
-                task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description, surroundings = landmark)
+                    landmark = geo_info
+                task_prompt = self.prompts["task_description"].format(instruction=self.episode.target_description, geoinstruct = landmark)
                 self.view_width = 2 * (self.controller.pose.z-self.landmark_nav_map.ground_level)
 
                 # Step 2：# 产生关于环境的描述
@@ -302,8 +307,7 @@ class ChatAgent(Agent):
                     continue
                 next_pos = self.get_next_position(target_json)
                 # Step 4: 生成动作
-                self.controller.pose = Pose4D(next_pos[0],next_pos[1],self.controller.pose.z, self.controller.pose.yaw)#move(self.controller.pose, Point2D(next_pos[0], next_pos[1]), 10, _)
-
+                self.controller.pose = Pose4D(next_pos[0],next_pos[1],self.controller.pose.z, self.controller.pose.yaw) #move(self.controller.pose, Point2D(next_pos[0], next_pos[1]), 10, _)
 
             # 记录当前步骤的信息
             self.results["steps"].append({
@@ -329,9 +333,9 @@ class ChatAgent(Agent):
         height_info = f"height_{self.set_height}" if self.set_height is not None else "default_height"
         filename = f"ChatAgent_{self.episode.id}_{height_info}_{timestamp}.json"
         if naive:
-            filepath = os.path.join("results/qwen/naive", filename)
+            filepath = os.path.join("results/gpt-4o/naive", filename)
         else:
-            filepath = os.path.join("results/qwen", filename)
+            filepath = os.path.join("results/gpt-4o", filename)
 
         # 确保结果目录存在
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -911,7 +915,6 @@ class GeonavAgent(Agent):
             enhanced_prompt = f"{text_prompt}\n\nPlease strictly follow the requirements below when responding:\n1. Use standard JSON format\n2. Include all required fields\n3. Wrap the response with ```json"
             try:
                 self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=[img])
-                # self.action = self.call_response(sysprompt=self.sys_prompt, userprompt=enhanced_prompt, image_list=[img])
                 target_json = extract_json_from_msg(self.action)
                 if target_json is not None:
                     break
@@ -1098,6 +1101,7 @@ class GeonavAgent(Agent):
         while self.controller.timestep < self.args.eval_max_timestep:
             rgb, _ = self.controller.perceive(self.controller.pose, self.episode.map_name)
             image_64 = encode_image_from_pil(Image.fromarray(rgb))
+            Image.fromarray(rgb).save(str(self.episode.id) + f'rgb_{self.controller.timestep}.png')
             image_list.append(image_64)
             # TODO: measure the z distance between the camera and the target on the ground
             # dep_img = Image.fromarray(depth.squeeze(), mode='L')  # 'L'表示灰度模式
@@ -1213,24 +1217,24 @@ class GeonavAgent(Agent):
         """递归查询以获取与任务相关的子图"""
         # 检查递归深度
         if current_depth >= max_depth:
-            print(f"达到最大递归深度 {max_depth}，停止继续递归")
+            print(f"Reached the maximum recursion depth {max_depth}, stopped recursion")
             return []
         
         # 检查operation_chain是否为空
         if not operation_chain:
-            print("操作链为空，无法执行查询")
+            print("The operation chain is empty and the query cannot be executed.")
             return []
         
         # 检查是否为多个操作链的情况
         if isinstance(operation_chain, list) and len(operation_chain) > 0 and isinstance(operation_chain[0], list):
-            print(f"检测到多步骤操作链({len(operation_chain)}个步骤)")
+            print(f"A multi-step operation chain was detected ({len(operation_chain)} steps)")
             return self.recursive_multi_step_query(operation_chain, max_depth, current_depth)
         
         try:
             # 验证操作链中的关系类型
             for op in operation_chain:
                 if not isinstance(op, dict):
-                    print(f"警告: 操作链中存在非字典对象: {op}")
+                    print(f"Warning: Non-dictionary object in operation chain: {op}")
                     continue
                     
                 if op['method'] == 'get_child_nodes' and 'kwargs' in op and 'relation_type' in op['kwargs']:
@@ -1277,7 +1281,7 @@ class GeonavAgent(Agent):
         """处理多步骤操作链的递归查询"""
         # 检查递归深度
         if current_depth >= max_depth:
-            print(f"多步骤查询达到最大递归深度 {max_depth}，停止继续递归")
+            print(f"The multi-step query reaches the maximum recursion depth {max_depth}, and stops recursion")
             return []
             
         current_nodes = None
@@ -1285,14 +1289,14 @@ class GeonavAgent(Agent):
         
         for i, chain in enumerate(operation_chains):
             try:
-                print(f"执行步骤 {i+1}/{len(operation_chains)}")
+                print(f"Execute step {i+1}/{len(operation_chains)}")
                 
                 # 如果是后续步骤，且需要使用前一步骤的结果
                 if i > 0 and current_nodes and len(current_nodes) > 0:
                     # 检查是否第一个操作是get_child_nodes，如果是，则使用当前节点集合
                     if len(chain) > 0 and chain[0]['method'] == 'get_child_nodes':
                         # 此处使用前一步骤的结果作为父节点
-                        print(f"使用前一步骤的结果({len(current_nodes)}个节点)作为父节点")
+                        print(f"Use the result of the previous step ({len(current_nodes)} nodes) as the parent node")
                         
                         # 创建临时查询引擎
                         temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
@@ -1305,9 +1309,9 @@ class GeonavAgent(Agent):
                         if temp_current_nodes:
                             current_nodes = temp_current_nodes
                             all_nodes.extend(current_nodes)
-                            print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                            print(f"Step {i+1} finds {len(current_nodes)} nodes")
                         else:
-                            print(f"步骤 {i+1} 没有找到节点")
+                            print(f"Step {i+1} did not find the node")
                     else:
                         # 如果第一个操作不是get_child_nodes，则单独执行此链
                         temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
@@ -1320,9 +1324,9 @@ class GeonavAgent(Agent):
                         if temp_current_nodes:
                             current_nodes = temp_current_nodes
                             all_nodes.extend(current_nodes)
-                            print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                            print(f"Step {i+1} finds {len(current_nodes)} nodes")
                         else:
-                            print(f"步骤 {i+1} 没有找到节点")
+                            print(f"Step {i+1} did not find the node")
                 else:
                     # 对于第一个步骤，或者前面步骤没有结果的情况
                     temp_current_nodes = self.controller.query_engine.robust_subgraph_query(
@@ -1335,25 +1339,25 @@ class GeonavAgent(Agent):
                     if temp_current_nodes:
                         current_nodes = temp_current_nodes
                         all_nodes.extend(current_nodes)
-                        print(f"步骤 {i+1} 找到 {len(current_nodes)} 个节点")
+                        print(f"Step {i+1} finds {len(current_nodes)} nodes")
                     else:
-                        print(f"步骤 {i+1} 没有找到节点")
+                        print(f"Step {i+1} did not find the node")
                 
             except Exception as e:
-                print(f"步骤 {i+1} 执行错误: {str(e)}")
+                print(f"Error in step {i+1}: {str(e)}")
                 continue
         
         # 如果有多个步骤的结果，使用LLM筛选最符合原始查询的结果
         if len(all_nodes) > 0:
             if len(all_nodes) > len(current_nodes or []):
-                print(f"多步骤查询找到 {len(all_nodes)} 个总节点，最后一步有 {len(current_nodes or [])} 个节点")
+                print(f"Multi-step query finds {len(all_nodes)} total nodes, the last step has {len(current_nodes or [])} nodes")
                 # 可以选择返回all_nodes或current_nodes
                 # 这里选择返回最后一步的结果
                 return current_nodes
             else:
                 return current_nodes
         else:
-            print("所有步骤均未找到节点")
+            print("No nodes found for all steps")
             return None
     
     def ask_llm_to_continue(self, nodes):
@@ -1427,7 +1431,7 @@ class GeonavAgent(Agent):
         Generate a new operation chain to further refine the search for the target object.
         Available operations:
         - get_child_nodes(parent, relation_type): Gets the child node with the specified relationship to the parent node.
-        可用的关系类型有: "contains", "adjacent_to", "near_corner", "north_of", "south_of", "east_of", "west_of", "northeast_of", "northwest_of", "southeast_of", "southwest_of"
+        The available relationship types are: "contains", "adjacent_to", "near_corner", "north_of", "south_of", "east_of", "west_of", "northeast_of", "northwest_of", "southeast_of", "southwest_of"
         - filter_by_class(obj_class): Filter object nodes by class.
         - filter_by_attribute(key, value): Filter object nodes by attribute.
 

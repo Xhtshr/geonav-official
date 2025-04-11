@@ -9,8 +9,6 @@ python main_geonav.py\
     --altitude 50\
     --gsam_use_segmentation_mask\
     --gsam_box_threshold 0.20\
-    --learning_rate 0.0015\
-    --train_batch_size 12\
     --train_trajectory_type mturk\
     --eval_batch_size 50\
     --eval_max_timestep 20\

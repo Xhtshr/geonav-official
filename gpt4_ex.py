@@ -36,7 +36,7 @@ for t in range(5):
                 load_mturk_trajectories(args.split, f'easy_simpled_{t}', args.altitude),
                 max_episodes=None
             )
-        # # 选择目标预测器或规划器运动至 landmark
+        # 选择目标预测器或规划器运动至 landmark
         from gsamllavanav.observation import cropclient
         cropclient.load_image_cache()
         # 初始化agents列表

@@ -14,7 +14,7 @@ from scenegraphnav.evaluate import run_episodes_batch
 from scenegraphnav.agent import GeonavAgent
 
 DEVICE = 'cuda'
-test_data = 'medium_simpled'
+test_data = 'easy_good_case'
 
 args = parse_args()
 

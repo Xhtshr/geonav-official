@@ -17,7 +17,7 @@ from scenegraphnav.agent import ChatAgent
 DEVICE = 'cuda'
 
 args = parse_args()
-
+test = 'medium_simpled' # 'easy_simpled' # 'medium_simpled' # 'hard_simpled'
 if args.mode == 'eval':
     objects = get_city_refer_objects()
 
@@ -32,7 +32,7 @@ if args.mode == 'eval':
         # 测试整个split的所有样例
         test_episodes = generate_episodes_from_mturk_trajectories(
             objects,
-            load_mturk_trajectories(args.split, 'easy_simpled01', args.altitude),
+            load_mturk_trajectories(args.split, test, args.altitude),
             max_episodes=None
         )
     # # 选择目标预测器或规划器运动至 landmark
@@ -80,10 +80,10 @@ if args.mode == 'eval':
         return vlmodel, llmodel
 
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
-    VLM_backbone = 'GPT-4o' # visual model
+    VLM_backbone = 'Qwen2.5-VL-72b' # visual model
     LLM_backbone = 'Qwen-max' # language model
-    vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"#qwen2.5 "sk-f0de3487904a4a11950ba707623cdbab"
-    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"#"sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2" # "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",for 3.5-turbo
+    vl_api_key =  "sk-ca477c37e2214255a5498915ea609ae5" #qwen2.5#"sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
+    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"
     
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
 
@@ -111,7 +111,7 @@ if args.mode == 'eval':
     
     noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
     alt_env = f"_{args.alt_env}" if args.alt_env else ""
-    with open(f'vlm_controller_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
+    with open(args.output_dir + f'vlm_controller_{args.split}_{test}.json', 'w') as f:
         json.dump({
             'metrics': metrics.to_dict(),
             'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},

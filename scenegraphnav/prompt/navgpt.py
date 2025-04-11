@@ -30,14 +30,16 @@ OBJECT_GROUNDING = """You should detect all the objects in the list: {surroundin
 OBSERVATION_SUMMARY = """Image shows an aerial view of your observation may contain a view of the target and nearby surrounding objects. Observe the current image in detail, and find the mentioned target in the Instruction.
 Your position is {pos} and you are the center of the view. The length and width of the view are {shape}, translated into the [(x_min,y_min), (x_max,y_max)] of the real world coordination are {area}. 
 If u find this target, locate the position points (real world) of the target. Else if your don't find this, you should explore more. You response should consist three types of content: **decision**, **selected_pos**, and **navigation_recommendation**.
-
+Note: *selected_pos* is based on the real world coordination, *navigation_recommendation* choose from "North", "South", "East", "West", "Northeast", "Northwest", "Southeast", "Southwest", or "Stay"
+JSON does not support annotations! Please output the json in legal format. 
 **Required Output Format**  
     ```json
     {{
     "decision": "Explore|Locate",
-    "selected_pos": [x,y], # based on the real world coordination
-    "navigation_recommendation": "Move [direction]" # choose from "North", "South", "East", "West", "Northeast", "Northwest", "Southeast", "Southwest", or "Stay"
-    }}```"""
+    "selected_pos": [x,y],
+    "navigation_recommendation": "Move [direction]"
+    }}```
+Now, output:"""
 
 #利用原生的多图记忆能力
 MULTI_OBSERVATION_SUMMARY = """These Image shows sliding windows of aerial view. They are continuous shooting with drones and may contain the target and nearby surrounding objects. By thinking the task and understand these images, find the mentioned target.

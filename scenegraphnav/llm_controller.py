@@ -491,26 +491,26 @@ class LLMController:
         dy = child.position.y - parent.position.y
         angle = (math.degrees(math.atan2(dy, dx)) + 360) % 360  # 确保角度为正值
         
-        # relations = {
-        #     (337.5, 22.5): "north_of",      # 正北
-        #     (22.5, 67.5): "northeast_of",   # 东北
-        #     (67.5, 112.5): "east_of",       # 正东
-        #     (112.5, 157.5): "southeast_of", # 东南
-        #     (157.5, 202.5): "south_of",     # 正南
-        #     (202.5, 247.5): "southwest_of", # 西南
-        #     (247.5, 292.5): "west_of",      # 正西
-        #     (292.5, 337.5): "northwest_of"  # 西北
-        # }
         relations = {
-            (337.5, 22.5): "directly in front of",
-            (22.5, 67.5): "to the top right of",
-            (67.5, 112.5): "to the right of",
-            (112.5, 157.5): "to the bottom right of",
-            (157.5, 202.5): "directly behind",
-            (202.5, 247.5): "to the bottom left of",
-            (247.5, 292.5): "to the left of",
-            (292.5, 337.5): "to the top left of"
+            (337.5, 22.5): "north_of",      # 正北
+            (22.5, 67.5): "northeast_of",   # 东北
+            (67.5, 112.5): "east_of",       # 正东
+            (112.5, 157.5): "southeast_of", # 东南
+            (157.5, 202.5): "south_of",     # 正南
+            (202.5, 247.5): "southwest_of", # 西南
+            (247.5, 292.5): "west_of",      # 正西
+            (292.5, 337.5): "northwest_of"  # 西北
         }
+        # relations = {
+        #     (337.5, 22.5): "directly in front of",
+        #     (22.5, 67.5): "to the top right of",
+        #     (67.5, 112.5): "to the right of",
+        #     (112.5, 157.5): "to the bottom right of",
+        #     (157.5, 202.5): "directly behind",
+        #     (202.5, 247.5): "to the bottom left of",
+        #     (247.5, 292.5): "to the left of",
+        #     (292.5, 337.5): "to the top left of"
+        # }
         for (start, end), desc in relations.items():
             if start <= angle < end:
                 return desc
