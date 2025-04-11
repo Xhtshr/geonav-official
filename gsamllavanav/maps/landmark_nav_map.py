@@ -238,8 +238,10 @@ class LandmarkNavMap(Map):
         
         # 地标图例（灰度轮廓）
         for name, color in self.landmark_map.gray_colors.items():
+            # 确保颜色值在0-1范围内
+            normalized_color = np.clip(np.array(color[::-1])/255.0, 0, 1)
             elements.append(
-                Patch(facecolor=np.array(color[::-1])/255,
+                Patch(facecolor=normalized_color,
                     edgecolor='gray',
                     label=name,
                     linestyle='-',
@@ -247,10 +249,13 @@ class LandmarkNavMap(Map):
             )
         
         # 目标/环境图例
-        for phrase, color in {**self.target_map.semantic_colors, 
-                            **self.surroundings_map.semantic_colors}.items():
+        combined_colors = {**self.target_map.semantic_colors, 
+                        **self.surroundings_map.semantic_colors}
+        for phrase, color in combined_colors.items():
+            # 确保颜色值在0-1范围内
+            normalized_color = np.clip(np.array(color[:3])/255.0, 0, 1)
             elements.append(
-                Patch(facecolor=np.array(color[:3])/255,
+                Patch(facecolor=normalized_color,
                     label=phrase.capitalize())
             )
         

@@ -92,8 +92,30 @@ class GSamMap(Map):
                     self.semantic_colors[phrase] = rgba_color
                     break
             else:  # 颜色用尽时回退到黄金角算法
-                rgb_color = cv2.cvtColor(...)  # 保留原有算法作为备选
-                self.semantic_colors[phrase] = (*rgb_color, 255)
+                # 使用黄金角 (约137.5度) 来生成均匀分布的色相
+                golden_ratio = (5 ** 0.5 - 1) / 2
+                n = len(self.semantic_colors)
+                hue = (n * golden_ratio) % 1.0  # 在 [0,1] 范围内
+                
+                # 固定饱和度和明度以确保颜色可见性
+                saturation = 0.8  # 80% 饱和度
+                value = 0.9      # 90% 明度
+                
+                # 转换 HSV 到 RGB
+                hsv_color = np.array([[[
+                    hue * 360,  # OpenCV 需要 0-360 的色相值
+                    saturation * 255,  # OpenCV 需要 0-255 的饱和度值
+                    value * 255  # OpenCV 需要 0-255 的明度值
+                ]]], dtype=np.float32)
+                
+                # 转换 HSV 到 BGR
+                bgr_color = cv2.cvtColor(hsv_color, cv2.COLOR_HSV2BGR)
+                # 转换 BGR 到 RGB
+                rgb_color = bgr_color[0, 0, ::-1]
+                
+                # 将颜色值转换为整数并添加 alpha 通道
+                rgba_color = (*[int(c) for c in rgb_color], 255)
+                self.semantic_colors[phrase] = rgba_color
             
         return self.semantic_colors[phrase]
     def bbox_to_global_pos(self, bboxes):

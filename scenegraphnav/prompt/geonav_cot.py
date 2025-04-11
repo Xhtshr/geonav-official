@@ -33,7 +33,7 @@ Do not put thought here, your answer only include two components: **reason** and
 **Required Output Format**:
     ```json
     {{
-        "reason": "Explain your reasoning here.",
+        "reason": "Explain your reasoning here, no longer than 30 words.",
         "movement": "Move [northwest|northeast|southwest|southeast|north|south|east|west]"
     }}```
 <answer>
@@ -42,8 +42,9 @@ Do not put thought here, your answer only include two components: **reason** and
 OBJECT_SEARCH_PROMPT = """
 Answer the following question:
 <question>
-You are currently near the city landmarks and should search the area according to the described spatial relationship. Your assigned goal is: {goal}. Your desired state is: {state}.
-Based on the top-down map, determine the direction you need to move to achieve the goal.
+You are currently near the city landmarks and should search the area according to the novelty and attractiveness. You should consider the unexplored area and the objects that are expected to be observed.
+Assigned goal is: {goal}. Desired state is: {state}.
+Based on the top-down map, determine the direction you need to move.
 <question>
 
 <thought>
@@ -55,7 +56,7 @@ Do not put thought here, your answer only include two components: **reason** and
 **Required Output Format**:
     ```json
     {{
-        "reason": "Explain your reasoning here.",
+        "reason": "Explain your reasoning here, no longer than 30 words.",
         "movement": "Move [Move [northwest|northeast|southwest|southeast|north|south|east|west]]"
     }}```
 <answer>"""
@@ -149,8 +150,9 @@ For "white car parked 1st from bottom in right column":
 }}
 </Example>
 
-Now analyze: {objects}
+JSON does not support annotations! Please output the json in legal format. Now analyze: {objects}
 """
+
 QUERY_OPERATION_CHAIN_PROMPT  = """
     Converts navigation commands into a chain of query operations. Available operations:
     - get_geonode_by_name(name_pattern): finds geonodes based on a name pattern. If no name is provided, all geonodes are returned.
@@ -176,11 +178,11 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
         {{"method": "filter_by_attribute", "args": ["color", "brown"]}}
     ]
 
-    Example instruction: "Find the red car near the main entrance of the shopping mall"
+    Example instruction: "Find the red car in the north of the main entrance of the shopping mall"
     return operation chain:
     [
         {{"method": "get_geonode_by_name", "args": ["shopping mall"]}},
-        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "adjacent_to"}}}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "north_of"}}}},
         {{"method": "filter_by_class", "args": ["vehicle"]}},
         {{"method": "filter_by_attribute", "args": ["color", "red"]}}
     ]

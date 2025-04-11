@@ -143,7 +143,7 @@ For "white car parked 1st from bottom in right column":
 }}
 </Example>
 
-Now analyze: {objects}
+JSON does not support annotations! Please output the json in legal format. Now analyze: {objects}
 """
 
 QUERY_OPERATION_CHAIN_PROMPT  = """
@@ -171,11 +171,11 @@ QUERY_OPERATION_CHAIN_PROMPT  = """
         {{"method": "filter_by_attribute", "args": ["color", "brown"]}}
     ]
 
-    Example instruction: "Find the red car near the main entrance of the shopping mall"
+    Example instruction: "Find the red car in the north of the main entrance of the shopping mall"
     return operation chain:
     [
         {{"method": "get_geonode_by_name", "args": ["shopping mall"]}},
-        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "adjacent_to"}}}},
+        {{"method": "get_child_nodes", "kwargs": {{"relation_type": "north_of"}}}},
         {{"method": "filter_by_class", "args": ["vehicle"]}},
         {{"method": "filter_by_attribute", "args": ["color", "red"]}}
     ]

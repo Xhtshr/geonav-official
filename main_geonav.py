@@ -10,12 +10,12 @@ from gsamllavanav.evaluate import eval_planning_metrics
 from gsamllavanav.cityreferobject import get_city_refer_objects
 from gsamllavanav.dataset.generate import generate_episodes_from_mturk_trajectories
 from gsamllavanav.dataset.mturk_trajectory import load_mturk_trajectories
-from gsamllavanav.goal_selection import goal_selection_gdino, goal_selection_llava
 from scenegraphnav.evaluate import run_episodes_batch
 from scenegraphnav.agent import GeonavAgent
 
 DEVICE = 'cuda'
-test_data = 'easy_simpled_1'
+test_data = 'medium_simpled'
+
 args = parse_args()
 
 if args.mode == 'eval':
@@ -66,9 +66,8 @@ if args.mode == 'eval':
         elif VLM_backbone == 'GPT':
             vlmodel = OpenAI(
                 api_key=vl_api_key,
-                base_url= 'https://xiaoai.plus' #'https://api.chatanywhere.tech',
+                base_url= 'https://api.chatanywhere.tech' #'https://api.chatanywhere.tech',
             )
-        
         if LLM_backbone == 'Qwen-online':
             llmodel = OpenAI(
                 api_key=ll_api_key,
@@ -79,17 +78,16 @@ if args.mode == 'eval':
                 api_key=ll_api_key,
                 base_url='https://api.chatanywhere.tech'#'https://xiaoai.plus/v1',
             )
-        
         return vlmodel, llmodel
     
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'GPT' # visual model
     LLM_backbone = 'Qwen-online' # language model
-    vl_api_key =  "sk-Y1BeG9ve6rAfPumNR0AwtnClJ8yZz7c5KS2yjs5EgYI7o3DH"
+    vl_api_key =  "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
     ll_api_key = "sk-ca477c37e2214255a5498915ea609ae5"
-    os.environ["OPENAI_API_KEY"] = "sk-Y1BeG9ve6rAfPumNR0AwtnClJ8yZz7c5KS2yjs5EgYI7o3DH"
+    os.environ["OPENAI_API_KEY"] = "sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr"
     # # 设置 OPENAI_BASE_URL 环境变量
-    os.environ["OPENAI_BASE_URL"] = "https://xiaoai.plus"
+    os.environ["OPENAI_BASE_URL"] = "https://api.chatanywhere.tech"
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
     strategy_distance_records = {
         'Start': [],
@@ -115,7 +113,7 @@ if args.mode == 'eval':
     
     metrics = eval_planning_metrics(args, test_episodes, trajectory_logs)
 
-    print(f"{args.split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}metrics")
+    print(f"{args.split} -- NE {metrics.mean_final_pos_to_goal_dist: .1f}, SR {metrics.success_rate_final_pos_to_goal*100: .2f}, OSR {metrics.success_rate_oracle_pos_to_goal*100: .2f}, SPL {metrics.success_rate_weighted_by_path_length*100: .2f}metrics")
     for strategy, distances in strategy_distance_records.items():
         if distances:  # 确保列表不为空
             avg_distance = sum(distances) / len(distances)
@@ -124,9 +122,10 @@ if args.mode == 'eval':
             print(f"No data available for {strategy}")
     noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
     alt_env = f"_{args.alt_env}" if args.alt_env else ""
-    with open(f'geonav_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}_{test_data}.json', 'w') as f:
+    with open(args.output_dir + f'geonav_{args.split}_{args.ablation}_{args.eval_goal_selector}_{test_data}.json', 'w') as f:
         json.dump({
             'metrics': metrics.to_dict(),
+            'success': results,
             'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},
             'strategy_averages': {k: (sum(v)/len(v) if len(v)>0 else None) for k,v in strategy_distance_records.items()}
         }, f)

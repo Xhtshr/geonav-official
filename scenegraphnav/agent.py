@@ -4,9 +4,11 @@ import cv2
 import json
 import numpy as np
 from skimage import color
-from gsamllavanav.parser import ExperimentArgs
-from gsamllavanav.space import Pose4D, Point3D, Point2D
+
+from gsamllavanav.space import Pose4D, Point2D
 from gsamllavanav.dataset.episode import Episode
+from scenegraphnav.parser import parse_args
+from scenegraphnav.parser import ExperimentArgs
 from scenegraphnav.llm_controller import LLMController # only used for our scenegraphnav methods
 from scenegraphnav.evaluate import move
 
@@ -16,15 +18,18 @@ from utils.QwenAPI import encode_image_from_pil
 from PIL import Image
 
 from scenegraphnav.prompt.navgpt import *
-# from scenegraphnav.prompt.geonav_cot import *
-from scenegraphnav.prompt.geonav import *
 from gsamllavanav.actions import DiscreteAction
 from gsamllavanav.teacher.algorithm.lookahead import lookahead_discrete_action
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
 from datetime import datetime
 from gsamllavanav.maps.landmark_nav_map import LandmarkNavMap
-
+args = parse_args()
+print(args.ablation)
+if args.ablation == 'w/o_cot':
+    from scenegraphnav.prompt.geonav import *
+else:
+    from scenegraphnav.prompt.geonav_cot import *
 def rgb_entropy(rgb_img):
     hsv_img = color.rgb2hsv(rgb_img)
     entropy = 0
@@ -340,22 +345,6 @@ class ChatAgent(Agent):
 
         print(f"Results saved to {filepath}")
 
-        """
-        使用 VLM 模型推理下一步 UAV 动作。
-        """
-        # 生成 VLM 输出
-        output_ids = self.model.generate(**inputs, max_new_tokens=128)
-        generated_ids = [
-            output_ids[len(input_ids):]
-            for input_ids, output_ids in zip(inputs.input_ids, output_ids)
-        ]
-        # 解码生成的动作
-        output_text = self.processor.batch_decode(
-            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-        )
-        print(f"Generated Suggestion: {output_text}")
-        return output_text[0]  # 假设返回单步动作
-
 
 
 
@@ -500,6 +489,8 @@ class SceneAgent(Agent):
                 detections = self.landmark_nav_map.target_map.obj_list + self.landmark_nav_map.surroundings_map.obj_list
                 # Graph memory
                 _, landmark = self.controller.build_scene_nodes(detections, self.landmark_nav_map.landmark_map.landmarks, show=False)
+                if args.ablation == 'wo_landmark':
+                    landmark = ''
 
             if isinstance(self.model, Qwen2VLForConditionalGeneration):
                 raise NotImplementedError
@@ -546,7 +537,7 @@ class SceneAgent(Agent):
             
             # 记录当前步骤的信息
             self.results["steps"].append({
-                "time_step": t,
+                "time_step": self.controller.timestep,
                 "pose": (self.controller.pose.x, self.controller.pose.y, self.controller.pose.z, self.controller.pose.yaw),
                 "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
                 "observation_suggestion":self.observation,
@@ -742,7 +733,7 @@ class GeonavAgent(Agent):
         self.subtask_status = "pending"  # 子任务状态（pending/running/completed）
         self.search_threshold = 0.05  # 信息增益阈值，可配置参数
 
-        self.save_path = args.output_dir
+        self.save_path = args.output_dir + args.ablation
         
         # Whether parse the instruction or not, Retry parse instruction until process
         # while self.task_prior_knowledge is None:
@@ -883,7 +874,7 @@ class GeonavAgent(Agent):
         elif task['strategy'] == 'Search':
             img = self.gen_map(query_type='semantic')
             text_prompt = self.prompts['object_search'].format(geoinstruct=geoinstruct, goal=task['goal'], state=task['desired_state'])
-        elif task['strategy'] == 'Locate':
+        elif task['strategy'] == 'Locate' and args.ablation != 'wo_sg':
             img = img_64
             text_prompt = self.prompts['object_locate'].format(pos=self.controller.pose.xy, area=self.xyxy, goal=self.episode.target_description)
             
@@ -910,6 +901,9 @@ class GeonavAgent(Agent):
                 selected_node = max(target_nodes, key=lambda n: getattr(n, 'confidence', 0) if hasattr(n, 'confidence') else 0)
                 next_pos = (selected_node.position.x, selected_node.position.y)
                 return next_pos
+        else:
+            img = img_64
+            text_prompt = self.prompts['object_locate'].format(pos=self.controller.pose.xy, area=self.xyxy, goal=self.episode.target_description)
 
         max_retries = 3
         retry_count = 0
@@ -933,12 +927,6 @@ class GeonavAgent(Agent):
 
     def generate_operation_chain(self, goal_description):
         """生成操作链"""
-        # 判断指令是否为复杂查询
-        is_complex = self.is_complex_query(goal_description)
-        
-        if is_complex:
-            return self.generate_complex_operation_chain(goal_description)
-        
         # 使用常规方式生成操作链
         prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=goal_description)
         response = self.call_response(sysprompt=None, userprompt=prompt, image_list=[])
@@ -1075,13 +1063,14 @@ class GeonavAgent(Agent):
 
     def check_subgoals(self, task):
         if task['strategy'] == 'Navigate':
+            self.switch_time = self.controller.timestep
             if self.controller.timestep > 6: #防止陷入NotFound
                 self.strategy_distances['Navigate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
                 return True
             # check if any landmarks are reached
             return all(lm.position.xy.dist_to(self.controller.pose.xy) < 40.0 for lm in self.landmark_nav_map.landmark_map.landmarks)
         elif task['strategy'] == 'Search':
-            if self.controller.timestep > 11: #防止陷入search around
+            if self.controller.timestep > (self.switch_time + 6): #防止陷入search around
                 self.strategy_distances['Search'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
                 return True
             # evaluate whether the information has changed
@@ -1119,7 +1108,10 @@ class GeonavAgent(Agent):
             )
             # detect and memory the scene objects
             detect_mode = 'VLM'  # 'GSAM'
-            landmark = self.controller.build_geo_nodes(self.landmark_nav_map.landmark_map.landmarks)
+            if args.ablation != 'wo_landmark':
+                landmark = self.controller.build_geo_nodes(self.landmark_nav_map.landmark_map.landmarks)
+            else:
+                landmark = self.controller.build_geo_nodes([])
             
             # 判断是否需要执行 VLM 检测
             current_position = self.controller.pose.xy
@@ -1171,7 +1163,6 @@ class GeonavAgent(Agent):
             strategy = current_task['strategy'] # temp
             if self.controller.reached_target(self.controller.pose, self.target):
                 print("Target reached.")
-                Success = True
             # Step 5: check the subgoals
             if self.check_subgoals(current_task):
                 self.subtask_status = "completed"
@@ -1180,6 +1171,10 @@ class GeonavAgent(Agent):
                 if self.current_task_index >= len(self.plan['sub_goals']):
                     print("All sub-tasks completed!")
                     self.strategy_distances['Locate'] = self.controller.pose.xy.dist_to(self.episode.target_position.xy)
+                    if self.controller.reached_target(self.controller.pose, self.target):
+                        print("Target reached.")
+                        Success = True
+                    pos_log.append(self.controller.pose)
                     break  # 提前退出循环
             self.results["steps"].append({
                 "time_step": self.controller.timestep,

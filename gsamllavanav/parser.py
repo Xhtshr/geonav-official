@@ -27,7 +27,7 @@ class ExperimentArgs:
     altitude: float
     ablate: Literal['rgb', 'depth', 'tracking', 'landmark', 'gsam', '']
     alt_env: Literal['flood', 'ground_fissure', '']
-
+    
     # gsam
     gsam_rgb_shape: tuple[int, int]
     gsam_use_segmentation_mask: bool
@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument('--resume_log_id', type=str, default='')
 
     # observation
-    parser.add_argument('--output_dir', type=str, default='results/geonav')
+    parser.add_argument('--output_dir', type=str, default='results')
     parser.add_argument('--map_size', type=int, default=240)
     parser.add_argument('--map_meters', type=float, default=410.)
     parser.add_argument('--map_update_interval', type=int, default=5)

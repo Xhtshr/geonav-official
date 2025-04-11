@@ -11,7 +11,8 @@ class ExperimentArgs:
     seed: int
     mode: Literal['train', 'eval']
     
-    model: Literal['mgp', 'seq2seq_with_map', 'cma_with_map']
+    ablation: Literal['wo_sg', 'wo_landmark' , 'wo_cot', 'full']
+    model: Literal['mgp', 'seq2seq_with_map', 'cma_with_map', 'geonav']
     landmark_mode: Literal['predictor', 'planner']
     # logger
     log: bool
@@ -58,7 +59,7 @@ class ExperimentArgs:
     success_iou: float
     move_iteration: int
     progress_stop_val: float
-    eval_goal_selector: Literal['gdino', 'llava']
+    eval_goal_selector: Literal['gdino', 'llava', 'qwen']
     gps_noise_scale: float
 
     # airsim
@@ -96,8 +97,10 @@ def parse_args():
 
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--mode', type=str, choices=['train', 'eval'], default='train')
+    parser.add_argument('--ablation', type=str, choices=['wo_sg', 'wo_landmark' , 'wo_cot', 'full'], default='full')
 
-    parser.add_argument('--model', type=str, choices=['mgp', 'seq2seq_with_map', 'cma_with_map'], default='mgp')
+    parser.add_argument('--model', type=str, choices=['mgp', 'seq2seq_with_map', 'cma_with_map', 'geonav'], default='geonav')
+
     # landmark mode
     parser.add_argument('--landmark_mode', type=str, choices=['predictor', 'planner', 'None'], default='None')
     # logger
@@ -105,7 +108,7 @@ def parse_args():
     parser.add_argument('--silent', action='store_true', default=False, help="disable printing log info to stdout")
     parser.add_argument('--resume_log_id', type=str, default='')
     # result save path
-    parser.add_argument('--output_dir', type=str, default='results/')
+    parser.add_argument('--output_dir', type=str, default='results/geonav')
     # observation
     parser.add_argument('--map_type', type=str, choices=['topdown_map', 'w/o_semantic', 'w/o_annotation', 'w/o_landmark', 'map_with_grid', ''], default='topdown_map')
     parser.add_argument('--map_size', type=int, default=480)
@@ -145,7 +148,7 @@ def parse_args():
     parser.add_argument('--success_iou', type=float, default=0.4)
     parser.add_argument('--move_iteration', type=int, default=5)
     parser.add_argument('--progress_stop_val', type=float, default=0.75)
-    parser.add_argument('--eval_goal_selector', type=str, choices=['gdino', 'llava'], default='gdino')
+    parser.add_argument('--eval_goal_selector', type=str, choices=['gdino', 'llava', 'qwen'], default='qwen')
     parser.add_argument('--gps_noise_scale', type=float, default=0.)
 
     # airsim

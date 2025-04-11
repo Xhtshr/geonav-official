@@ -41,28 +41,63 @@ class LLMController:
             base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',
         )
 
-        response = client.chat.completions.create(
-            model="qwen-vl-max-latest",
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a professional urban scene analyzer with commonsense and strong ability to infer the spatial relationships."
-                },
-                {
-                    "role": "user",
-                    "content": [
+        for attempt in range(2):  # 尝试3次
+            try:
+                response = client.chat.completions.create(
+                    model="qwen-vl-max-latest",
+                    response_format={"type": "json_object"},
+                    messages=[
                         {
-                            "type": "image_url",
-                            "image_url": f"data:image/png;base64,{image_64}"
+                            "role": "system",
+                            "content": "You are a professional urban scene analyzer with commonsense and strong ability to infer the spatial relationships."
                         },
-                        {"type": "text", "text": PROMPT}
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": f"data:image/png;base64,{image_64}"
+                                },
+                                {"type": "text", "text": PROMPT}
+                            ]
+                        }
                     ]
-                }
-            ]
-        )
+                )
 
-        return json.loads(response.choices[0].message.content)
+                # 检查 response 的结构
+                if not response or not hasattr(response, "choices") or not response.choices:
+                    print(f"完整的 API 返回内容: {response}")
+                    raise ValueError("API 返回的 response 结构无效或为空")
+
+                # 检查 choices[0] 是否存在
+                if not response.choices[0] or not hasattr(response.choices[0], "message") or not response.choices[0].message:
+                    print(f"完整的 API 返回内容: {response}")
+                    raise ValueError("API 返回的 choices[0].message 结构无效或为空")
+
+                content = response.choices[0].message.content
+                if not content:
+                    raise ValueError("API 返回的 message.content 为空")
+
+                # 清理返回内容
+                content = content.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.endswith("```"):
+                    content = content[:-3]
+
+                # 尝试解析 JSON
+                try:
+                    json_data = json.loads(content)
+                    return json_data
+                except json.JSONDecodeError as e:
+                    print(f"JSON 解析失败: {e}")
+                    print(f"返回内容: {content}")
+                    raise e
+
+            except Exception as e:
+                print(f"调用 API 时发生错误: {str(e)}")
+                if attempt == 1:  # 如果是最后一次尝试，抛出异常
+                    raise e
 
     def act(self, pose: Pose4D, actions: list, more_info=False):
         new_pose = pose
@@ -128,7 +163,7 @@ class LLMController:
                     )
                     
                     # 如果不是 "contains" 关系，还可以添加更详细的空间描述
-                    if relation_type != "contains":
+                    if relation_type != "contains" and relation_type != "adjacent_to":
                         spatial_rel = self._describe_spatial_relation(
                             parent_geo, 
                             self.scene_graph.nodes[global_id]
@@ -198,8 +233,8 @@ class LLMController:
         # 使用LLM生成操作链
         prompt = QUERY_OPERATION_CHAIN_PROMPT.format(instruction=instruction)
         client = OpenAI(
-            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
-            base_url='https://api.chatanywhere.tech',
+            api_key= os.environ.get("OPENAI_API_KEY", 'sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr'),
+            base_url= os.environ.get("OPENAI_BASE_URL", 'https://api.chatanywhere.tech'),
         )
         
         response = client.chat.completions.create(
@@ -349,8 +384,8 @@ class LLMController:
         """
         
         client = OpenAI(
-            api_key="sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr",
-            base_url='https://api.chatanywhere.tech',
+            api_key= os.environ.get("OPENAI_API_KEY", 'sk-xHX92exOc6iulrMz8q8BGcXOveU8qVgpfDkvdXdbctOA4rOr'),
+            base_url= os.environ.get("OPENAI_BASE_URL", 'https://api.chatanywhere.tech'),
         )
         
         response = client.chat.completions.create(
@@ -451,11 +486,21 @@ class LLMController:
         return None, None
     
     def _describe_spatial_relation(self, parent: GeoNode, child: ObjectNode):
-        """生成更细致的自然语言描述的空间关系"""
+        """生成一致的空间关系描述"""
         dx = child.position.x - parent.position.x
         dy = child.position.y - parent.position.y
         angle = (math.degrees(math.atan2(dy, dx)) + 360) % 360  # 确保角度为正值
         
+        # relations = {
+        #     (337.5, 22.5): "north_of",      # 正北
+        #     (22.5, 67.5): "northeast_of",   # 东北
+        #     (67.5, 112.5): "east_of",       # 正东
+        #     (112.5, 157.5): "southeast_of", # 东南
+        #     (157.5, 202.5): "south_of",     # 正南
+        #     (202.5, 247.5): "southwest_of", # 西南
+        #     (247.5, 292.5): "west_of",      # 正西
+        #     (292.5, 337.5): "northwest_of"  # 西北
+        # }
         relations = {
             (337.5, 22.5): "directly in front of",
             (22.5, 67.5): "to the top right of",
@@ -466,9 +511,8 @@ class LLMController:
             (247.5, 292.5): "to the left of",
             (292.5, 337.5): "to the top left of"
         }
-        
         for (start, end), desc in relations.items():
             if start <= angle < end:
                 return desc
-        return "near"
+        return "adjacent_to"  # 默认关系保持不变
     
