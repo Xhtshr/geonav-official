@@ -1101,7 +1101,7 @@ class GeonavAgent(Agent):
         while self.controller.timestep < self.args.eval_max_timestep:
             rgb, _ = self.controller.perceive(self.controller.pose, self.episode.map_name)
             image_64 = encode_image_from_pil(Image.fromarray(rgb))
-            Image.fromarray(rgb).save(str(self.episode.id) + f'rgb_{self.controller.timestep}.png')
+            Image.fromarray(rgb).save(args.output_dir+str(self.episode.id) + f'rgb_{self.controller.timestep}.png')
             image_list.append(image_64)
             # TODO: measure the z distance between the camera and the target on the ground
             # dep_img = Image.fromarray(depth.squeeze(), mode='L')  # 'L'表示灰度模式
@@ -1179,6 +1179,14 @@ class GeonavAgent(Agent):
                         print("Target reached.")
                         Success = True
                     pos_log.append(self.controller.pose)
+                    self.results["steps"].append({
+                    "time_step": self.controller.timestep,
+                    "pose": (self.controller.pose.x, self.controller.pose.y, self.controller.pose.z, self.controller.pose.yaw),
+                    "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
+                    "plan": current_task,
+                    "observation_suggestion":self.observation,
+                    "action_suggestion": self.action,
+                })
                     break  # 提前退出循环
             self.results["steps"].append({
                 "time_step": self.controller.timestep,
@@ -1186,7 +1194,7 @@ class GeonavAgent(Agent):
                 "distance_to_target": self.controller.pose.xy.dist_to(self.target.xy),
                 "plan": current_task,
                 "observation_suggestion":self.observation,
-                "action_suggestion": self.action
+                "action_suggestion": self.action,
             })
             # 记录当前位置
             pos_log.append(self.controller.pose)

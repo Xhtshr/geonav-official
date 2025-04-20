@@ -24,8 +24,9 @@ You are currently {geoinstruct}. Your assigned goal is: {goal}. Your desired sta
 Based on the top-down map, determine the direction you need to move to achieve the goal.
 <question>
 
+Your reply includes two components: **thought** and **answer**. Your answer should follow the json format and only includes two components: **reason** and **movement**.
 <thought>
-Provide your reasoning and step-by-step thought process here.
+Provide your reasoning and step-by-step thought process here. Do not put into json-format answer.
 <thought>
 
 <answer>
@@ -37,18 +38,20 @@ Do not put thought here, your answer only include two components: **reason** and
         "movement": "Move [northwest|northeast|southwest|southeast|north|south|east|west]"
     }}```
 <answer>
+JSON does not support annotations! Now, output:
 """
 
 OBJECT_SEARCH_PROMPT = """
 Answer the following question:
 <question>
-You are currently near the city landmarks and should search the area according to the novelty and attractiveness. You should consider the unexplored area and the objects that are expected to be observed.
+You are currently near the city landmarks and should search the area according to the novelty and object attractiveness. You should consider the unexplored area and the objects that are expected to be observed.
 Assigned goal is: {goal}. Desired state is: {state}.
-Based on the top-down map, determine the direction you need to move.
+Based on the top-down map, determine the direction you need to search.
 <question>
 
+Your reply includes two components: **thought** and **answer**. Your answer should follow the json format and only includes two components: **reason** and **movement**.
 <thought>
-Provide your reasoning and step-by-step thought process here.
+Provide your reasoning and step-by-step thought process here.  Do not put into json-format answer.
 <thought>
 
 <answer>
@@ -59,7 +62,9 @@ Do not put thought here, your answer only include two components: **reason** and
         "reason": "Explain your reasoning here, no longer than 30 words.",
         "movement": "Move [Move [northwest|northeast|southwest|southeast|north|south|east|west]]"
     }}```
-<answer>"""
+<answer>
+JSON does not support annotations! Now, output:
+"""
 
 TARGET_LOCATE_PROMPT = """
 Your current position is {pos}, which is at the center of your view. The area of your view are {area}, corresponding to the real-world coordinates [(x_min, y_min), (x_max, y_max)].
@@ -68,8 +73,9 @@ Your assigned goal is: {goal}. You are currently flying above the target and nee
 If you identify the target, determine its position in real-world coordinates. Answer the following question:
 <question>
 
+Your reply includes two components: **thought** and **answer**. Your answer should follow the json format and only includes two components: **reason** and **movement**.
 <thought>
-Provide your reasoning and a step-by-step explanation of your thought process here.
+Provide your reasoning and a step-by-step explanation of your thought process here. Do not put into json-format answer.
 <thought>
 
 <answer>
@@ -80,7 +86,9 @@ Your answer should follow the json format and only includes two components: **re
         "reason": "Explain your reasoning here.",
         "selected_pos": [x, y]
     }}```
-<answer>"""
+<answer>
+JSON does not support annotations! Now, output:
+"""
 
 
 LOCAL_GRAPH_PROMPT = """
@@ -149,7 +157,6 @@ For "white car parked 1st from bottom in right column":
 ]
 }}
 </Example>
-
 JSON does not support annotations! Please output the json in legal format. Now analyze: {objects}
 """
 

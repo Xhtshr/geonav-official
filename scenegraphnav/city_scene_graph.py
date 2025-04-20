@@ -232,7 +232,7 @@ class QueryEngine:
             elif method_name == 'get_geonode_by_name':
                 # 特殊处理 get_geonode_by_name，当 args 为空时使用所有地理节点
                 args = op.get('args', [])
-                if not args or (len(args) == 1 and not args[0]):
+                if not args or (len(args) == 1 and args[0] == ""):
                     # 如果没有提供名称模式，则返回所有地理节点
                     current_nodes = [n for n in self.graph.nodes.values() if isinstance(n, GeoNode)]
                 else:
