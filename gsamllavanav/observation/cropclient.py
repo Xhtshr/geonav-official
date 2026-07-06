@@ -33,12 +33,30 @@ def get_rgbd(map_name: str, pose: Pose4D, rgb_size: tuple[int, int], depth_size:
 
     return rgb, depth
 
+def get_global_rgb_map(map_name: str) -> np.ndarray:
+    if map_name not in _rgb_cache:
+        raise KeyError(f"Map '{map_name}' not found in _rgb_cache. Available maps: {list(_rgb_cache.keys())}")
+    return _rgb_cache[map_name].copy()
+
+def world_to_pixel(map_name: str, x: float, y: float) -> tuple[int, int]:
+    """
+    将世界坐标 (x, y) 转换为全局 RGB 图像的像素坐标 (col, row)
+    """
+    if _raster_cache is None:
+        raise RuntimeError("Raster cache not loaded. Call load_image_cache() first.")
+    if map_name not in _raster_cache:
+        raise KeyError(f"Map '{map_name}' not found in raster cache.")
+
+    raster = _raster_cache[map_name]
+    row, col = raster.index(x, y)
+    return int(round(col)), int(round(row))  # 返回 (col, row)
 
 def crop_image(map_name: str, pose: Pose4D, shape: tuple[int, int], type: Literal['rgb', 'depth']) -> np.ndarray:
 
     image = (_rgb_cache if type =='rgb' else _height_cache)[map_name]
-    
+    #返回四个角点的坐标。坐标格式为 (行, 列)，即 (row, column)
     view_area_corners_rowcol = _compute_view_area_corners_rowcol(map_name, pose)
+    # 将坐标转换为 (列, 行) 格式，即 (col, row)，以适应 cv2 的坐标系统
     view_area_corners_colrow = np.flip(view_area_corners_rowcol, axis=-1)
 
     img_row, img_col = shape
@@ -60,9 +78,22 @@ def _compute_view_area_corners_rowcol(map_name: str, pose: Pose4D):
     """
 
     raster = _raster_cache[map_name]
-
+    '''
+    # 配置参数
+    ORIGIN_X = 0.0       # 图像左上角的物理X坐标
+    ORIGIN_Y = 496.8     # 图像左上角的物理Y坐标
+    RESOLUTION = 0.1     # 比例尺：0.1米/像素
+    # 替换 raster.index 的手动实现
+    # 逻辑：
+    # 1. Col (x) = (物理X - 原点X) / 分辨率
+    # 2. Row (y) = (原点Y - 物理Y) / 分辨率  <-- 注意这里用原点减物理Y，实现Y轴翻转
+    view_area_corners_rowcol = [
+        ((ORIGIN_Y - y) / RESOLUTION, (x - ORIGIN_X) / RESOLUTION) 
+        for x, y in view_area_corners(pose, GROUND_LEVEL[map_name])
+    ]
+    '''
     view_area_corners_rowcol = [raster.index(x, y) for x, y in view_area_corners(pose, GROUND_LEVEL[map_name])]
-
+    #print(f"裁剪视角像素坐标: {view_area_corners_rowcol}")
     return np.array(view_area_corners_rowcol, dtype=np.float32)
 
 

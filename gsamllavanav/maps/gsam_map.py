@@ -64,6 +64,7 @@ class GSamMap(Map):
         if GSamMap._grounding_dino_model is None or GSamMap._sam_predictor is None:
             GSamMap._init_models(device=device)
 
+    #为每个语义类别动态分配颜色，优先用预定义色，超出后用黄金角算法生成新色，保证可区分性
     def _get_dynamic_color(self, phrase):
         # 预定义科研配色（RGB格式，alpha=255）
         if self.layer == 'target':
@@ -81,7 +82,7 @@ class GSamMap(Map):
                 (188, 189, 34),   # 橄榄绿
                 (23, 190, 207)    # 青色
             ]
-        
+
         if phrase not in self.semantic_colors:
             # 排除已使用的预定义颜色
             used_colors = set(self.semantic_colors.values())
@@ -103,21 +104,21 @@ class GSamMap(Map):
                 
                 # 转换 HSV 到 RGB
                 hsv_color = np.array([[[
-                    hue * 360,  # OpenCV 需要 0-360 的色相值
+                    hue * 180,  # OpenCV 需要 0-180 的色相值
                     saturation * 255,  # OpenCV 需要 0-255 的饱和度值
                     value * 255  # OpenCV 需要 0-255 的明度值
                 ]]], dtype=np.float32)
-                
                 # 转换 HSV 到 BGR
                 bgr_color = cv2.cvtColor(hsv_color, cv2.COLOR_HSV2BGR)
                 # 转换 BGR 到 RGB
                 rgb_color = bgr_color[0, 0, ::-1]
-                
                 # 将颜色值转换为整数并添加 alpha 通道
                 rgba_color = (*[int(c) for c in rgb_color], 255)
                 self.semantic_colors[phrase] = rgba_color
             
         return self.semantic_colors[phrase]
+    
+    #将检测到的bbox（像素坐标）转换为全局物理坐标（Point2D），用于后续目标定位
     def bbox_to_global_pos(self, bboxes):
         poses = []
         for bbox in bboxes:
@@ -127,6 +128,7 @@ class GSamMap(Map):
             # 添加到 poses 列表
             poses.append(Point2D(center_x, center_y))
         return poses
+    #根据检测到的bbox、短语和置信度，生成目标列表（obj_list），便于后续处理
     def detect_list(self, bboxes):
         self.obj_list = []
         poses = self.bbox_to_global_pos(bboxes)
@@ -135,6 +137,7 @@ class GSamMap(Map):
                 phrase = self.captions[0]
             self.obj_list.append((pos, phrase, confidence))
 
+    #观测更新函数
     def update_observation(
         self,
         camera_pose: Pose4D,
@@ -144,7 +147,7 @@ class GSamMap(Map):
         max_depth_meters=MAX_DEPTH_METERS,
         strategy=''
     ):
-        if depth_perspective is not None and flip_depth:  # depth sensors often produce vertically flipped images
+        if depth_perspective is not None and flip_depth:  # 是否翻转深度图（因传感器常输出上下颠倒的图）
             depth_perspective = np.flip(depth_perspective, axis=0)
 
         self.pose = camera_pose
@@ -154,7 +157,7 @@ class GSamMap(Map):
             self.detections = None
             self.phrases = None
             return self
-        # 在这里不兼容旧方法了
+        # 在这里不兼容旧方法了（目标检测）
         self.detections, self.phrases = GSamMap._gdino_predict_bboxes(
             image_bgr, self.captions, image_bgr.shape[0] / (2 * (camera_pose.z - self.ground_level)),
             self.gsam_params.box_threshold, self.gsam_params.text_threshold, self.gsam_params.max_box_size, self.gsam_params.max_box_area
@@ -174,15 +177,17 @@ class GSamMap(Map):
                 ])
             
             if depth_perspective is None:
+                #平面投影
                 new_gsam_map = self._gsam_map_from_planar_projection(self.detections, camera_pose, image_bgr.shape[:2])
             else:
+                #透视投影
                 new_gsam_map = self._gsam_map_from_perspective_projection(self.detections, camera_pose, depth_perspective, max_depth_meters)
             
             self.gsam_map = np.maximum(self.gsam_map, new_gsam_map)
 
         return self
     
-    
+    #从缓存中加载预先生成的地图片段，快速更新当前视野区域的gsam_map，提升效率
     def update_from_map_cache(self, camera_pose: Pose4D):
 
         rows, cols = self.to_rows_cols(view_area_corners(camera_pose, self.ground_level))
@@ -200,14 +205,15 @@ class GSamMap(Map):
             caption = caption.replace('/', ' ')
             map_cache = GSamMap._map_cache[f'{self.name}-{caption}'.lower()][0]
             self.gsam_map[view_area_mask] = np.maximum(self.gsam_map[view_area_mask], map_cache[view_area_mask])
-        
+            #采用最大值融合
         return self
 
+    #将gsam_map转为标准数组格式，便于后续处理或可视化
     def to_array(self, dtype=np.float32) -> np.ndarray:
         gsam_map = self.gsam_map if self.gsam_params.use_bbox_confidence else self.gsam_map > 0
         return gsam_map[np.newaxis].astype(dtype)
     
-    @property
+    @property#返回当前观测中置信度最高的目标的全局bbox
     def max_confidence_bbox(self):
 
         row, col, channel = self.image_bgr.shape
@@ -216,7 +222,7 @@ class GSamMap(Map):
         
         return xyxy_to_global_bbox(xyxy, (row, col), self.pose, self.ground_level)
 
-    
+    #可视化检测到的目标框，支持显示标签和置信度
     def plot_bboxes(self, plot_size=(16, 16), show=True):
         if self.detections:
             labels = [f"{phrase} {confidence:0.2f}" for confidence, phrase in zip(self.detections.confidence, self.phrases)]
@@ -228,7 +234,8 @@ class GSamMap(Map):
             sv.plot_image(annotated_frame, plot_size)
 
         return annotated_frame
-
+    
+    #可视化分割掩码，叠加在原图上
     def plot_segmentation_masks(self, plot_size=(16, 16), show=True):
         if self.detections:
             self.detections.class_id = np.arange(len(self.detections))
@@ -245,12 +252,13 @@ class GSamMap(Map):
 
         return annotated_frame
     
+    #直接可视化gsam_map
     def plot(self, plot_size=(16, 16)):
         gsam_map = self.to_array()
         sv.plot_image(gsam_map, plot_size)
         return gsam_map
     
-    @property
+    @property#将BGR格式的图像转为RGB，便于可视化
     def image_rgb(self):
         return self.image_bgr[..., ::-1]
     
@@ -284,7 +292,23 @@ class GSamMap(Map):
         detections, phrases = cls._grounding_dino_model.predict_with_caption(
             image_bgr, '.'.join(captions), box_threshold, text_threshold
         )
-
+        #print("Raw phrases:", phrases)
+        
+        # === 关键修复：用标准化后的 phrase 检查是否在 caption_set 中 ===
+        # Step 1: 如果没有检测结果，直接返回空
+        if len(phrases) == 0:
+            return detections, phrases  # detections 也是空的 sv.Detections
+        # Step 2: 标准化输入 captions（转小写、去空格）
+        caption_set = set(c.lower().strip() for c in captions)
+        # Step 3: 检查是否在 caption_set 中
+        valid_phrases_mask = np.array([p.lower().strip() in caption_set for p in phrases])
+        #print("Valid mask:", valid_phrases_mask)
+        #print("Filtered phrases:", np.array(phrases)[valid_phrases_mask].tolist())
+        # Step 4: 过滤 detections 和 phrases
+        detections = detections[valid_phrases_mask]
+        phrases = np.array(phrases)[valid_phrases_mask].tolist()
+        # === 关键修复：用标准化后的 phrase 检查是否在 caption_set 中 ===
+        
         # filter out boxes with invalid size, xyxy: left,down,right,up
         # unit is meter
         box_widths = (detections.xyxy[:, 2] - detections.xyxy[:, 0]) / pixels_per_meter
@@ -334,6 +358,7 @@ class GSamMap(Map):
 
         return masks, refined_bboxes
     
+    #将分割掩码投影到地图平面，融合置信度，更新gsam_map和颜色层
     def _gsam_map_from_planar_projection(self, detections: sv.Detections, camera_pose: Pose4D, image_shape: tuple[int, int]):
         img_row, img_col = image_shape
 
@@ -366,33 +391,30 @@ class GSamMap(Map):
         
         return gsam_map
     
+    #根据分割掩码和短语，更新地图的颜色层，实现语义可视化
     def _update_color_layer(self, resized_masks, world_xys, phrases, img_shape):
         """核心颜色更新逻辑"""
         # 将世界坐标转换为地图网格坐标
         rows, cols = self.to_rows_cols(world_xys.reshape(-1, 2))
         map_coords = np.stack([rows, cols], axis=1).reshape(*img_shape, 2).transpose(2,0,1)
-
         # 创建临时颜色层
         temp_color = np.zeros_like(self.color_array)
-
         for idx in range(len(resized_masks)):
             mask = resized_masks[idx]
             phrase = phrases[idx].lower()
             if phrase == '':
                 continue
             color = self.semantic_colors.get(phrase, self._get_dynamic_color(phrase))
-            
             # 生成掩码区域坐标
             rows, cols = map_coords[0][mask], map_coords[1][mask]
             valid = (rows >= 0) & (rows < self.shape[0]) & (cols >= 0) & (cols < self.shape[1])
             r, c = rows[valid].astype(int), cols[valid].astype(int)
-            
             # 直接覆盖颜色（无透明度混合）
             temp_color[r, c] = color
-
         # 保留最强颜色（不叠加）
         self.color_array = np.maximum(self.color_array, temp_color)
-
+    
+    #利用深度图，将分割掩码投影到三维世界坐标，再映射到地图，实现更精确的地图融合
     def _gsam_map_from_perspective_projection(self, detections: sv.Detections, camera_pose: Pose4D, depth_perspective: np.ndarray, max_depth_meters: float):
         depth_n_row, depth_n_col = depth_perspective.shape
 
@@ -419,7 +441,7 @@ class GSamMap(Map):
 
         return gsam_map
 
-
+#调整掩码尺寸，保证与输入图像一致
 def _resize_mask(masks: np.ndarray, resized_shape: tuple[int, int]):
     assert masks.dtype == bool
     masks = masks.view(np.uint8).transpose(1, 2, 0)
@@ -428,7 +450,7 @@ def _resize_mask(masks: np.ndarray, resized_shape: tuple[int, int]):
     masks = masks.view(bool).transpose(2, 0, 1)
     return masks
 
-
+#将深度图像素点转换为世界坐标（xyz），用于三维投影
 def _perspective_depth_to_world_xyz(perspective_depth: np.ndarray, camera_pose: Pose4D, max_depth_meters: float):
     '''converts pinhole depth image to world xyz coords: (row, col, depth) -> (row, col, xyz)'''
     r, c = perspective_depth.shape

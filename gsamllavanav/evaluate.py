@@ -129,7 +129,7 @@ def eval_planning_metrics(
         spl = success * optimal_length / denominator if denominator > 0 else 0
         spl_values.append(spl)
     print(np.array(final_pos_to_goal_dists))
-    print(success)
+    #print(success)
     # 构建指标对象（补充必要字段）
     metrics = GoalPredictorMetrics(
         mean_final_pos_to_goal_dist=np.mean(final_pos_to_goal_dists),

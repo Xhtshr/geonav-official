@@ -54,8 +54,8 @@ class Pose5D(NamedTuple):
 
     @classmethod
     def from_direction_vector(cls, x: float, y: float, z: float, dx: float, dy: float, dz: float):
-        yaw = np.arctan2(dy, dx)#pianzhuan
-        pitch = np.arctan2(dz, np.sqrt(dx**2 + dy**2))#fuyang
+        yaw = np.arctan2(dy, dx)#偏转角
+        pitch = np.arctan2(dz, np.sqrt(dx**2 + dy**2))#俯仰角
         return Pose5D(x, y, z, yaw, pitch)
     
     @property
@@ -106,7 +106,7 @@ def crwh_to_global_bbox(
     
     return xyxy_to_global_bbox((x1, y1, x2, y2), image_size, pose, ground_level)
 
-
+#将图像边界框转换到世界坐标系
 def xyxy_to_global_bbox(
     xyxy: tuple[float, float, float, float],
     image_size: tuple[int, int],
@@ -170,5 +170,5 @@ def view_area_corners(pose: Pose4D, ground_level: float):
         center + altitude_from_ground * (-front - left),  # back right
         center + altitude_from_ground * (-front + left),  # back left
     ]
-
+    #print(f"View area corners (xy): {view_area_corners_xy}")
     return [Point2D(x, y) for x, y in view_area_corners_xy]

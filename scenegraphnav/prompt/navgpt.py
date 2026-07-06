@@ -96,6 +96,7 @@ PLANNER_PROMPTV2 = """
 You are a planner for a UAV navigation system to locate a target. The target description is {instruction}. You are {geoinstruct}. Answer the following questions:
 <question>
 The strategy list to achieve the subgoal is ['Navigate', 'Search', 'Locate']. If you are close to the landmark, you should move to search the area according to the described spatial relationship. If you are not close to the landmark, you should navigate near the landmark.
+Subtasks must follow the order of Navigate, Search, and Locate. In the sub-goals of navigate, try to avoid specific movement values.
 Please decompose task into detailed subgoals and output the result in a structured JSON format.
 <question>
 

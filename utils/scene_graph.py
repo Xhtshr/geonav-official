@@ -748,9 +748,8 @@ class SceneGraph():
                 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
                 chat_completion = client.chat.completions.create(  # added by someone
                     model="gpt-3.5-turbo",
-                    # model="gpt-4",  # gpt-4
                     messages=[{"role": "user", "content": prompt}],
-                    # timeout=10,  # Timeout in seconds
+                    max_tokens=2048,
                 )
                 return chat_completion.choices[0].message.content
             except:

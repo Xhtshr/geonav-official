@@ -7,11 +7,14 @@ logs
 tmp
 wandb
 weights
+models/
+results/
 
 gsamllavanav/fonts
 
 *.tif
 *.pyc
+*.zip
 
 tmp.py
 
@@ -24,3 +27,7 @@ _notebooks
 
 utils/test_unseen
 utils/val_seen
+
+environment.yml
+debug_*.py
+try.py

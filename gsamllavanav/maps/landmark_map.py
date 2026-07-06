@@ -30,7 +30,7 @@ class LandmarkMap(Map):
         for lm, color in zip(self.landmarks, self.gray_colors.values()):
             # 转换轮廓坐标为图像坐标
             pts = np.stack(self.to_rows_cols(lm.contour))[::-1].T  # [N,2]数组
-            
+            #print(pts)
             # 绘制彩色轮廓
             cv2.polylines(
             img=self.color_array,

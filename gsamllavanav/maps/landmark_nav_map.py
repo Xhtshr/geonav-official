@@ -1,11 +1,9 @@
 from typing import Optional
-import os
 import re
 import cv2
 import json
 from PIL import Image
 import numpy as np
-from openai import OpenAI
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
@@ -23,20 +21,54 @@ from .landmark_map import LandmarkMap
 from .gsam_map import GSamMap, GSamParams
 
 
+def _fig_to_pil(fig):
+    """Convert a Matplotlib figure to a PIL.Image in RGB format with multiple fallbacks.
+
+    This handles backends where `fig.canvas.tostring_rgb()` may not exist (raises AttributeError).
+    """
+    # Ensure the canvas is rendered
+    fig.canvas.draw()
+    width, height = fig.canvas.get_width_height()
+    # Try the common API first
+    try:
+        buf = fig.canvas.tostring_rgb()
+        return Image.frombytes('RGB', (width, height), buf)
+    except Exception:
+        # Fallback: try buffer_rgba -> convert to RGB
+        try:
+            buf = fig.canvas.buffer_rgba()
+            # buffer_rgba returns RGBA bytes
+            im = Image.frombuffer('RGBA', (width, height), buf, 'raw', 'RGBA', 0, 1)
+            return im.convert('RGB')
+        except Exception:
+            # Last resort: try renderer's buffer_rgba
+            try:
+                renderer = fig.canvas.get_renderer()
+                buf = renderer.buffer_rgba()
+                im = Image.frombuffer('RGBA', (width, height), buf, 'raw', 'RGBA', 0, 1)
+                return im.convert('RGB')
+            except Exception:
+                raise
+
+
 class LandmarkNavMap(Map):
+    """
+    Map_type: 
+        -plot.py: w/o annotation (remove lanmark anno), landmark, semantic, TopV, TopV+annotation
+    """
     def __init__(
         self,
         map_name: str,
-        map_shape: tuple[int, int],
-        map_pixels_per_meter: float,
+        map_shape: tuple[int, int],#地图尺寸
+        map_pixels_per_meter: float,#比例尺
         landmark_names: list[str],
         target_name: str, surroundings_names: list[str],
         gsam_params: GSamParams,
-        id: tuple = {},
+        id: tuple = {},#存在风险，tuple是元组，{}代表字典
         grid_size_meters: float = 20.0,
         save_path: str = 'results/geonav',
     ):
-        super().__init__(map_name, map_shape, map_pixels_per_meter)
+        super().__init__(map_name, map_shape, map_pixels_per_meter)#继承父类
         self.step = 0
         self.id = id
         self.save_path = save_path
@@ -161,7 +193,8 @@ class LandmarkNavMap(Map):
     def _merge_color_layers(self, ax, map_type) -> np.ndarray:
         """优化版图层合并：关键元素优先显示+智能透明度控制"""
         merged = np.zeros((*self.shape, 4), dtype=np.float32)
-        if map_type == 'landmark':
+        if map_type == 'landmark' or map_type == 'TopV':
+            # 仅显示地标层
             layers = [
             (self.landmark_map.color_array, 1.0) # 地标层不透明
         ]
@@ -263,10 +296,7 @@ class LandmarkNavMap(Map):
 
     def _render_output(self, fig, map_type) -> Image:
         """渲染输出图像,仅在topdown模式下保存"""
-        fig.canvas.draw()
-        plot_img = Image.frombytes('RGB', 
-                                fig.canvas.get_width_height(),
-                                fig.canvas.tostring_rgb())
+        plot_img = _fig_to_pil(fig)
         sanitized_map_type = map_type.replace(" ", "_").replace("/", "_")
         plt.savefig(self.save_path+f'/{sanitized_map_type}_{self.id}_test_00{self.step}.png')
         return encode_image_from_pil(plot_img)
@@ -277,13 +307,12 @@ class LandmarkNavMap(Map):
         query_engine=None,
         current_pos=None
     ):
-        import numpy as np
         # 颜色配置（RGBA格式）
         layer_colors = {
             'current view area': (0.5, 0, 0.5, 0.3),   # 紫色
         }
         
-        # 合并地图数据
+        # 合并地图数据，仅landmark
         map_layers = np.concatenate([
             np.expand_dims(self.to_array()[1],0),
         ])
@@ -292,6 +321,13 @@ class LandmarkNavMap(Map):
         fig, ax = plt.subplots(figsize=(10, 10))
         fig = plt.figure(figsize=(10, 10), facecolor='white')
         ax = fig.add_subplot(111)
+        # STMR类型特殊处理：添加网格
+        if map_type == 'STMR':
+            # 绘制网格线
+            ax.grid(True, which='both', color='gray', linestyle='--', linewidth=0.6, alpha=0.3)
+            ax.set_xticks(np.arange(0, self.shape[1], self.grid_size_pixels))
+            ax.set_yticks(np.arange(0, self.shape[0], self.grid_size_pixels))
+
         # 绘制当前视野区域
         if map_type != 'landmark':
             for idx, (layer_name, rgba) in enumerate(layer_colors.items()):
@@ -300,11 +336,11 @@ class LandmarkNavMap(Map):
         # 绘制landmark和semantic图层
         self._merge_color_layers(ax, map_type)
         # 添加landmark标注
-        if map_type != 'w/o annotation':
+        if map_type != 'w/o annotation' and map_type != 'STMR':
             self._annotate_landmarks(ax)
             
         # === 新增轨迹绘制逻辑 ===
-        # 绘制方向箭头
+        # 绘制方向箭头: topV模式需要
         if map_type != 'w/o annotation':
             arrow_length = 15  # 箭头长度（像素）
             if len(self.trajectory) == 1:
@@ -318,9 +354,8 @@ class LandmarkNavMap(Map):
                         width=3, 
                         head_width=8,
                         head_length=10,
-                        fc='lime',  # 箭头填充色
-                        ec='darkgreen',  # 箭头边缘色
-                        alpha=0.8)  # 半透明箭头
+                        fc='red',  # 箭头填充色
+                        ec='yellow')
             elif len(self.trajectory) >1:
                 # 转换轨迹坐标
                 trajectory_points = [
@@ -330,7 +365,8 @@ class LandmarkNavMap(Map):
                 
                 # 绘制轨迹线
                 x_coords, y_coords = zip(*trajectory_points)
-                ax.plot(x_coords, y_coords, color = 'black', linestyle='-', linewidth=3.5, alpha=0.7)  # 白色虚线轨迹
+                if map_type != 'TopV':
+                    ax.plot(x_coords, y_coords, color = 'black', linestyle='--', linewidth=1.5, alpha=0.3)
 
                 prev_pose = trajectory_points[-2]
                 pose = trajectory_points[-1]
@@ -349,12 +385,11 @@ class LandmarkNavMap(Map):
                     width=3, 
                     head_width=8,
                     head_length=10,
-                    fc='lime',  # 箭头填充色
-                    ec='darkgreen',  # 箭头边缘色
-                    alpha=0.4)  # 半透明箭头
+                    fc='red',  # 箭头填充色
+                    ec='yellow')
             
-        # 创建图例
-        if map_type != 'landmark':
+        # 创建图例，topV模式需要
+        if map_type != 'landmark' and map_type != 'STMR':
             self._annotate_objects(ax, query_engine=query_engine, current_pos=current_pos)
             legend_elements = self._create_legend_elements()
             ax.legend(handles=legend_elements, 
@@ -392,7 +427,6 @@ class LandmarkNavMap(Map):
         return blended
     def vanilla_plot(
         self,
-        goal_description: str,
         start_point: Point2D,
         true_goal: Point2D,
         show: bool =False,
@@ -496,7 +530,7 @@ class LandmarkNavMap(Map):
             plt.show()
 
         # 将绘制的画布转换为 PIL 图像
-        plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+        plot_img = _fig_to_pil(fig)
         plot_img = plot_img.resize((224,224))
         plt.savefig(f'results/vanilla/landmap_{self.id}_groundtruth_00{self.step}.png')
 
@@ -613,7 +647,7 @@ class LandmarkNavMap(Map):
             plt.show()
 
         # 将绘制的画布转换为 PIL 图像
-        plot_img = Image.frombytes('RGB', fig.canvas.get_width_height(), fig.canvas.tostring_rgb())
+        plot_img = _fig_to_pil(fig)
         plot_img = plot_img.resize((224,224))
         plt.savefig(f'results/grid/landmap_{self.id}_groundtruth_00{self.step}.png')
 

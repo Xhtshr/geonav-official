@@ -32,24 +32,24 @@ for i, stage in enumerate(navigation_stages):
             label=stage)
 
 # 设置左侧纵轴（距离）的标签和刻度
-ax1.set_xlabel('Task Difficulty', fontsize=16)
-ax1.set_ylabel('Distance to Target (meters)', fontsize=16)
+ax1.set_xlabel('Task Difficulty', fontsize=20)
+ax1.set_ylabel('Distance to Target (meters)', fontsize=20)
 ax1.set_xticks(index + 1.5 * bar_width)
-ax1.set_xticklabels(task_levels, fontsize=14)
-ax1.tick_params(axis='y', labelsize=14)
+ax1.set_xticklabels(task_levels, fontsize=18)
+ax1.tick_params(axis='y', labelsize=18)
 
 # 创建右侧纵轴，用于成功率，并将折线图点对齐到各簇中心
 ax2 = ax1.twinx()
 line_x = index + 1.5 * bar_width  # 让折线对应簇的中心位置
 ax2.plot(
     line_x, success_rates, 
-    color='lightcoral', linestyle='--', linewidth=2,
+    color='lightcoral', linestyle='--', linewidth=3.5,
     marker='o', markersize=8, label='Success Rate (%)',
     zorder=5  # 提升折线图层级，确保图例能叠加在上面
 )
-ax2.set_ylabel('Success Rate (%)', fontsize=16)
+ax2.set_ylabel('Success Rate (%)', fontsize=20)
 ax2.set_ylim(0, 35)  # 增大右侧纵轴的范围
-ax2.tick_params(axis='y', labelsize=14)
+ax2.tick_params(axis='y', labelsize=18)
 
 # 从两个坐标轴收集图例，并合并
 handles1, labels1 = ax1.get_legend_handles_labels()

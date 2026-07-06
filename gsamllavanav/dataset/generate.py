@@ -21,7 +21,7 @@ def generate_episodes_from_mturk_trajectories(
     for mturk_traj in tqdm(mturk_trajectories, desc='generating episodes'):
         if max_episodes is not None and len(episodes) >= max_episodes:
             break
-
+        
         if mturk_traj.dist_marker_to_target > max_dist_marker_to_target:
             continue
 
@@ -31,7 +31,7 @@ def generate_episodes_from_mturk_trajectories(
 
         if len(teacher_actions) <= max_steps:
             episodes.append(Episode(objects[mturk_traj.map_name][mturk_traj.object_id], mturk_traj.desc_id, teacher_trajectory, teacher_actions))
-    
+         
     return episodes
 
 

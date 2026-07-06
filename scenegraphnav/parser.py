@@ -14,6 +14,7 @@ class ExperimentArgs:
     ablation: Literal['wo_sg', 'wo_landmark' , 'wo_cot', 'full']
     model: Literal['mgp', 'seq2seq_with_map', 'cma_with_map', 'geonav']
     landmark_mode: Literal['predictor', 'planner']
+    deployment: Literal['local', 'online']
     # logger
     log: bool
     silent: bool
@@ -69,6 +70,9 @@ class ExperimentArgs:
     # eval params
     test_one_example: bool
     split: str
+    map_name: Optional[str]
+    episode_id: Optional[int]
+    ann_id: Optional[int]
 
     def to_dict(self):
         return asdict(self)
@@ -90,14 +94,15 @@ class ExperimentArgs:
             self.gsam_max_box_size, self.gsam_max_box_area
         )
 
-
+#解析命令行参数，并最终构造ExperimentArgs实例，所有参数都有默认值，用户可通过命令行覆盖
 def parse_args():
 
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--mode', type=str, choices=['train', 'eval'], default='train')
-    parser.add_argument('--ablation', type=str, choices=['wo_sg', 'wo_landmark' , 'wo_cot', 'full'], default='full')
+    parser.add_argument('--ablation', type=str, choices=['wo_sg', 'wo_landmark' , 'wo_cot', 'wo_scm', 'full'], default='full')
+    parser.add_argument('--deployment', type=str, choices=['local', 'online'], default='online')
 
     parser.add_argument('--model', type=str, choices=['mgp', 'seq2seq_with_map', 'cma_with_map', 'geonav'], default='geonav')
 
@@ -110,9 +115,9 @@ def parse_args():
     # result save path
     parser.add_argument('--output_dir', type=str, default='results/geonav')
     # observation
-    parser.add_argument('--map_type', type=str, choices=['topdown_map', 'w/o_semantic', 'w/o_annotation', 'w/o_landmark', 'map_with_grid', ''], default='topdown_map')
-    parser.add_argument('--map_size', type=int, default=480)
-    parser.add_argument('--map_meters', type=float, default=410.)
+    parser.add_argument('--map_type', type=str, choices=['topdown_map', 'semantic', 'w/o_annotation', 'landmark', 'map_with_grid', 'TopV', 'STMR'], default='topdown_map')
+    parser.add_argument('--map_size', type=int, default=480) # 地图的大小，单位为像素
+    parser.add_argument('--map_meters', type=float, default=410.) #试着下降地图范围，以保证地图的分辨率
     parser.add_argument('--map_update_interval', type=int, default=5)
     parser.add_argument('--max_depth', type=float, default=200.)
     parser.add_argument('--altitude', type=float, default=50)
@@ -160,6 +165,12 @@ def parse_args():
                        help="只测试一个样例")
     parser.add_argument('--split', type=str, default='val_seen',
                        help="测试数据集的split ('val_seen', 'val_unseen', 'test_unseen')")
+    parser.add_argument('--map_name', type=str, default=None,
+                       help="指定地图名称，如 'birmingham_block_1'，用于选择特定案例")
+    parser.add_argument('--episode_id', type=int, default=None,
+                       help="指定 episode ID，如 11，用于选择特定案例")
+    parser.add_argument('--ann_id', type=int, default=None,
+                       help="指定 annotation ID，如 1，用于进一步区分案例")
 
     args = parser.parse_args()
     args.gsam_rgb_shape = args.gsam_rgb_shape, args.gsam_rgb_shape

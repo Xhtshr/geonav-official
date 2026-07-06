@@ -97,14 +97,14 @@ if args.mode == 'eval':
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'Qwen2.5-VL-72b' # visual model
     LLM_backbone = 'Qwen-max' #language model
-    vl_api_key = "sk-f0de3487904a4a11950ba707623cdbab" #qwen2.5
-    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"#"sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2" # "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",for 3.5-turbo
+    vl_api_key = "" #qwen2.5
+    ll_api_key = ""#,for 3.5-turbo
     
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'GPT-4o' # visual model
     LLM_backbone = 'Qwen-max' # language model
-    vl_api_key =  "sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2"
-    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"
+    vl_api_key =  ""
+    ll_api_key = ""
 
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
 

@@ -7,11 +7,26 @@ WEIGHTS_DIR = PROJECT_ROOT/"weights"
 GOAL_PREDICTOR_CHECKPOINT_DIR = PROJECT_ROOT/"checkpoints/goal_predictor"
 BASELINE_WITH_MAP_CHECKPOINT_DIR = PROJECT_ROOT/"checkpoints/baseline_with_map"
 
+#旧数据
 CITYREFER_DATA_DIR = PROJECT_ROOT/"data/cityrefer"
 OBJECTS_PATH = CITYREFER_DATA_DIR/"objects.json"
 PROCESSED_DECRIPTIONS_PATH = CITYREFER_DATA_DIR/"processed_descriptions.json"
 MTURK_TRAJECTORY_DIR = PROJECT_ROOT/"data/citynav"
+'''
+#新数据
+CITYREFER_DATA_DIR = PROJECT_ROOT/"data/cityrefer_new"
+OBJECTS_PATH = CITYREFER_DATA_DIR/"objects.json"
+PROCESSED_DECRIPTIONS_PATH = CITYREFER_DATA_DIR/"processed_descriptions.json"
+MTURK_TRAJECTORY_DIR = PROJECT_ROOT/"data/citynav_new"
 
+
+#大曲数据
+CITYREFER_DATA_DIR = PROJECT_ROOT/"data/daqurefer"
+OBJECTS_PATH = CITYREFER_DATA_DIR/"daqu_objects.json"
+PROCESSED_DECRIPTIONS_PATH = CITYREFER_DATA_DIR/"processed_descriptions.json"
+MTURK_TRAJECTORY_DIR = PROJECT_ROOT/"data/daqutest"
+'''
+#ORTHO_IMAGE_DIR = PROJECT_ROOT/"data/rgbd/daqu"
 ORTHO_IMAGE_DIR = PROJECT_ROOT/"data/rgbd/ortho_projection_images"
 SUBBLOCKS_DIR = PROJECT_ROOT/"data/subblocks"
 

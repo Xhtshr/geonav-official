@@ -88,8 +88,8 @@ if args.mode == 'eval':
     # 为test_episodes的每个episode创建一个Agent，并将episode数据传入Agent
     VLM_backbone = 'Qwen2.5-VL-72b' # visual model
     LLM_backbone = 'Qwen-max' # language model
-    vl_api_key = "sk-f0de3487904a4a11950ba707623cdbab" #qwen
-    ll_api_key = "sk-f0de3487904a4a11950ba707623cdbab"#"sk-dooWu6cCsNTtSsB7Fb5f2f25Cd164b67A94cFd650442EcB2" # "sk-8xBWP046CnOzBAEaC262872c0f4d40EeAc366eB651B7C020",for 3.5-turbo
+    vl_api_key = "" #qwen
+    ll_api_key = "" # ,for 3.5-turbo
     
     vlmodel, llmodel = initialize_models(VLM_backbone, LLM_backbone, vl_api_key, ll_api_key)
 
@@ -104,23 +104,4 @@ if args.mode == 'eval':
     # results 里面是true or false,计算正确率
     accuracy = sum(results) / len(results) if results else 0
     print(f"Accuracy: {accuracy * 100:.2f}%")
-    
-    # # 使用VLM推断目标位置
-    # predicted_positions = (goal_selection_gdino if args.eval_goal_selector == 'gdino' else goal_selection_llava)(args, pred_goal_logs)
-    # for eps_id, pose in predicted_positions.items():
-    #     trajectory_logs[eps_id].append(pose)
-    
-    # metrics = eval_goal_predictor(args, test_episodes, trajectory_logs, pred_goal_logs, pred_progress_logs)
-
-    # print(f"{args.split} -- {metrics.mean_final_pos_to_goal_dist: .1f}, {metrics.success_rate_final_pos_to_goal*100: .2f}, {metrics.success_rate_oracle_pos_to_goal*100: .2f}")
-    
-    # noise = f"noise_{args.gps_noise_scale}" if args.gps_noise_scale > 0 else ""
-    # alt_env = f"_{args.alt_env}" if args.alt_env else ""
-    # with open(f'llm_controller_{args.split}_{args.progress_stop_val}{noise}{alt_env}_{args.eval_goal_selector}.json', 'w') as f:
-    #     json.dump({
-    #         'metrics': metrics.to_dict(),
-    #         'trajectory_logs': {str(eps_id): [tuple(pose) for pose in trajectory] for eps_id, trajectory in trajectory_logs.items()},
-    #         'pred_goal_logs': {str(eps_id): [tuple(pos) for pos in pred_goals] for eps_id, pred_goals in pred_goal_logs.items()},
-    #         'pred_progress_logs': {str(eps_id): pred_progresses for eps_id, pred_progresses in pred_progress_logs.items()},
-    #     }, f)
 

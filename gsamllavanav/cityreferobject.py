@@ -8,7 +8,7 @@ from gsamllavanav.defaultpaths import OBJECTS_PATH, PROCESSED_DECRIPTIONS_PATH
 from gsamllavanav.space import Point2D, Point3D
 
 
-@dataclass
+@dataclass#将处理过的自然语言指令结构化为目标对象名称、地标和周围环境描述三部分
 class ProcessedDescription:
     target: str
     landmarks: list[str]
@@ -32,11 +32,11 @@ class CityReferObject:
         self.dimension = Point3D(*self.dimension)
         self.contour = [Point2D(*p) for p in self.contour]
     
-    @property
+    @property#计算轮廓面积
     def area(self):
         return self.contour_polygon.area
     
-    @property
+    @property#返回轴对齐包围盒（AABB）的四个角点（用于快速碰撞检测或可视化）
     def bbox_corners(self):
         x, y, z = self.position
         dx, dy, dz = self.dimension
@@ -48,7 +48,7 @@ class CityReferObject:
             Point2D(x - dx/2, y - dy/2),
         ]
 
-    @property
+    @property#构造闭合多边形（注意：+ [self.contour[0]] 保证首尾相连）
     def contour_polygon(self):
         return Polygon(self.contour + [self.contour[0]])
 

@@ -2,6 +2,7 @@ from typing import NamedTuple
 
 
 GROUND_LEVEL = {
+    'daqu_block_1': 0.0,
     'birmingham_block_8': 9.767633576781428,
     'birmingham_block_5': 9.035724612581797,
     'cambridge_block_4': 37.4447906884959,
@@ -51,6 +52,7 @@ class Bounds(NamedTuple):
     y_max: float
 
 MAP_BOUNDS = {
+    "daqu_block_1": Bounds(0, 0, 296.9, 496.8),
     "birmingham_block_8": Bounds(799.95, 399.91874999999993, 1200.0500000000002, 800.01875),
     "birmingham_block_5": Bounds(399.95, 799.9187499999999, 800.05, 1200.01875),
     "cambridge_block_4": Bounds(113.3875, 1599.96875, 400.0875, 1802.26875),

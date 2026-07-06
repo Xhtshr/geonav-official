@@ -22,8 +22,8 @@ you have some flexibility in defining node properties and relationship descripti
 # 调用 OpenAI GPT 模型
 def gpt_api_call(prompt):
     # 导入openai key配置
-    os.environ["OPENAI_API_KEY"] = "sk-ca477c37e2214255a5498915ea609ae5"
-    os.environ["OPENAI_BASE_URL"] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    os.environ["OPENAI_API_KEY"] = ""
+    os.environ["OPENAI_BASE_URL"] = ""
 
     client = OpenAI(
         api_key=os.environ.get("OPENAI_API_KEY"),
@@ -32,6 +32,7 @@ def gpt_api_call(prompt):
     response = client.chat.completions.create(
         model="qwen-max-latest",
         messages=[{"role": "user", "content": prompt}],
+        max_tokens=2048,
         temperature=0.01  # 设置为 0.01 以确保解析的稳定性
     )
     return response.choices[0].message.content

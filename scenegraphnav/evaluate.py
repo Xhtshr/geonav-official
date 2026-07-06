@@ -20,16 +20,16 @@ from scenegraphnav.landmark_search import landmark_loc
 
 @dataclass
 class GoalPredictorMetrics:
-    mean_final_pos_to_goal_dist: float = np.inf
-    mean_final_pred_to_goal_dist: float = np.inf
-    success_rate_final_pos_to_goal: float = 0.
-    success_rate_final_pred_to_goal: float = 0.
-    mean_oracle_pos_to_goal_dist: float = np.inf
-    mean_oracle_pred_to_goal_dist: float = np.inf
-    success_rate_oracle_pos_to_goal: float = 0.
-    success_rate_oracle_pred_to_goal: float = 0.
-    mean_progress_mse: float = np.inf
-    mean_final_progress_mse: float = np.inf
+    mean_final_pos_to_goal_dist: float = np.inf # 轨迹最终位置到目标的平均距离
+    mean_final_pred_to_goal_dist: float = np.inf # 轨迹最终预测位置到目标的平均距离
+    success_rate_final_pos_to_goal: float = 0. # 轨迹最终位置到目标的成功率
+    success_rate_final_pred_to_goal: float = 0. # 轨迹最终预测位置到目标的成功率
+    mean_oracle_pos_to_goal_dist: float = np.inf # 轨迹上距离目标最近的位置到目标的平均距离（oracle位置）
+    mean_oracle_pred_to_goal_dist: float = np.inf # 轨迹上预测位置距离目标最近的位置到目标的平均距离（oracle预测位置）
+    success_rate_oracle_pos_to_goal: float = 0. # 轨迹上距离目标最近的位置到目标的成功率（oracle位置）
+    success_rate_oracle_pred_to_goal: float = 0. # 轨迹上预测位置距离目标最近的位置到目标的成功率（oracle预测位置）
+    mean_progress_mse: float = np.inf # 轨迹上每个位置的预测进度与实际进度的均方误差
+    mean_final_progress_mse: float = np.inf # 轨迹最终位置的预测进度与实际进度的均方误差
     
     @classmethod
     def names(cls):
@@ -46,7 +46,7 @@ def eval_goal_predictor(
     pred_goal_logs: dict[EpisodeID, list[Point2D]],
     pred_progress_logs: dict[EpisodeID, list[float]],
 ):
-    # metrics based on distance to goal
+    # metrics based on distance to goal 
     final_pos_to_goal_dists = np.array([trajectory_logs[eps.id][-1].xy.dist_to(eps.target_position.xy) for eps in episodes])
     final_pred_to_goal_dists = np.array([pred_goal_logs[eps.id][-1].dist_to(eps.target_position.xy) for eps in episodes])
 
@@ -101,7 +101,7 @@ def run_episodes_batch(
     pose_logs: dict[EpisodeID, list[Pose4D]] = defaultdict(list)
     pred_goal_logs: dict[EpisodeID, list[Point2D]] = defaultdict(list)
     pred_progress_logs: dict[EpisodeID, list[float]] = defaultdict(list)
-
+    #使用端到端神经网络模型预测目标位置和进度
     if landmark_mode == 'predictor':
         for episodes_batch in tqdm(dataloader, desc='eval episodes', unit='batch', colour='#88dd88', position=1):
             # init episode
@@ -165,6 +165,7 @@ def run_episodes_batch(
                     move(pose, xy, args.move_iteration, noisy_pose) if not done else pose
                     for pose, noisy_pose, xy, done in zip(poses, noisy_poses, pred_goal_xys, dones)
                 ]
+    #使用基于地标（landmark）的规划器直接导航到预设地标
     elif landmark_mode == 'planner':
         poses = [epi.start_pose for epi in episodes]
         landmarks = [epi.description_landmarks for epi in episodes]
